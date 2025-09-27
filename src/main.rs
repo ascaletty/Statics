@@ -4,7 +4,7 @@ use bevy::state::commands;
 
 use bevy::color::palettes::css::GRAY;
 use bevy::math::{VectorSpace, bounding::*};
-use bevy::{prelude::*, sprite};
+use bevy::{gizmos, prelude::*, sprite};
 use bevy_cursor::prelude::*;
 
 #[derive(Debug)]
@@ -90,25 +90,6 @@ struct LinePreview {
     end: Vec2,
 }
 
-impl Command for LinePreview {
-    fn apply(self, world: &mut World) {
-        let length = self.start.distance(self.end);
-        let diff = self.start - self.end;
-        let theta = diff.y.atan2(diff.x);
-        let midpoint = (self.start + self.end) / 2.;
-        let transform = Transform::from_xyz(midpoint.x, midpoint.y, 0.)
-            .with_rotation(Quat::from_rotation_z(theta));
-        world.spawn((
-            Sprite {
-                color: Color::WHITE,
-                custom_size: Some(Vec2::new(length, 2.)),
-                ..Default::default()
-            },
-            transform,
-        ));
-    }
-}
-
 // #[derive(Component)]
 // struct Edge {
 //     position: Vec2,
@@ -134,8 +115,6 @@ fn main() {
         .add_plugins((DefaultPlugins, TrackCursorPlugin))
         .add_systems(Startup, setup_camera)
         .add_systems(Update, keyboard_input)
-        // .add_systems(Update, update_line_preview)
-        .add_systems(Update, spawn_line_preview)
         .run();
 }
 
@@ -151,6 +130,7 @@ fn keyboard_input(
     cursor: Res<CursorLocation>,
     mut truss: ResMut<Truss>,
     preview: ResMut<LinePreview>,
+    mut gizmos: Gizmos,
 ) {
     match *mode {
         Mode::Command => {
@@ -195,7 +175,7 @@ fn keyboard_input(
                 *mode = Mode::Command;
             }
             if keys.just_pressed(KeyCode::KeyQ) {
-                update_line_preview(cursorloc, last.position.unwrap(), preview);
+                update_line_preview(cursorloc, last.position.unwrap(), preview, gizmos);
                 // Left Ctrl was released
             }
             // we can check multiple at once with `.any_*`
@@ -238,19 +218,25 @@ fn delete_components(
 //         Transform::from_xyz(cursor.x, cursor.y, 0.),
 //     ));
 // }
-fn update_line_preview(cursor: Vec2, last: Vec2, mut preview: ResMut<LinePreview>) {
+fn update_line_preview(
+    cursor: Vec2,
+    last: Vec2,
+    mut preview: ResMut<LinePreview>,
+    mut gizmos: Gizmos,
+) {
     preview.start = last;
     preview.end = cursor;
+    gizmos.line_2d(preview.start, preview.end, Color::srgb(256., 0., 0.));
 }
 
-fn spawn_line_preview(
-    mut commands: Commands,
-    cursor: Res<CursorLocation>,
-    last: Res<LastNode>,
-    mut previewon: ResMut<PreviewOn>,
-) {
-    commands.queue(LinePreview {
-        start: last.position.unwrap_or(Vec2::ZERO),
-        end: cursor.world_position().unwrap_or(Vec2::new(100., 100.)),
-    });
-}
+// fn spawn_line_preview(
+//     mut commands: Commands,
+//     cursor: Res<CursorLocation>,
+//     last: Res<LastNode>,
+//     mut previewon: ResMut<PreviewOn>,
+// ) {
+//     commands.queue(LinePreview {
+//         start: last.position.unwrap_or(Vec2::ZERO),
+//         end: cursor.world_position().unwrap_or(Vec2::new(100., 100.)),
+//     });
+// }
