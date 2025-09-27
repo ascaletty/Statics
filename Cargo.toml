@@ -1,0 +1,9 @@
+[package]
+name = "truss"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = { version = "0.16.1", features = ["dynamic_linking"] }
+bevy_cursor = {version= "0.6.0", features=["2d"]}
+
