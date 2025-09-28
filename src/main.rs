@@ -1,11 +1,14 @@
+use bevy::asset::RenderAssetUsages;
 use bevy::ecs::entity;
-use bevy::render::mesh::{Indices, Mesh};
+use bevy::render::mesh::{Indices, Mesh, RectangleMeshBuilder};
 use bevy::state::commands;
 
-use bevy::color::palettes::css::GRAY;
+use bevy::color::palettes::css::{CORAL, GRAY};
 use bevy::math::{VectorSpace, bounding::*};
 use bevy::{gizmos, prelude::*, sprite};
 use bevy_cursor::prelude::*;
+use std::collections::HashMap;
+use std::process::id;
 
 #[derive(Debug)]
 enum Connection {
@@ -29,25 +32,52 @@ struct Truss {
     dragging: Option<Node>,
     connections: Vec<Connection>,
 }
+
+#[derive(Resource)]
+struct MembersIds {
+    idmap: HashMap<u32, Handle<Mesh>>,
+}
+
+#[derive(Resource)]
+struct MemberCount {
+    count: u32,
+}
 #[derive(Component, Clone, Debug)]
 struct Member {
     start: Vec2,
     end: Vec2,
+    id: u32,
 }
+
 impl Command for Member {
     fn apply(self, world: &mut World) {
         let length = self.start.distance(self.end);
         let diff = self.start - self.end;
-        let theta = diff.y.atan2(diff.x);
+        let mut theta = diff.x / diff.y;
+        theta = theta.atan();
         let midpoint = (self.start + self.end) / 2.;
         let transform = Transform::from_xyz(midpoint.x, midpoint.y, 0.)
-            .with_rotation(Quat::from_rotation_z(theta));
+            .with_rotation(Quat::from_rotation_z(-theta));
+        let mesh_handle = world.resource_scope(|_world, mut meshes: Mut<Assets<Mesh>>| {
+            let rect = Rectangle::new(2., length);
+            meshes.add(rect)
+        });
+        let color_material =
+            world.resource_scope(|_world, mut materials: Mut<Assets<ColorMaterial>>| {
+                let blue = Color::srgb(0.0, 0.0, 1.0);
+                materials.add(blue)
+            });
+        world.resource_scope(|_world, mut member_ids: Mut<MembersIds>| {
+            member_ids.idmap.insert(self.id, mesh_handle.clone())
+        });
+        println!(
+            "Creating idmap with id {}, mesh_handle {:?}",
+            self.id, mesh_handle
+        );
         world.spawn((
-            Sprite {
-                color: Color::WHITE,
-                custom_size: Some(Vec2::new(length, 2.)),
-                ..Default::default()
-            },
+            self,
+            Mesh2d(mesh_handle.clone()),
+            MeshMaterial2d(color_material.clone()),
             transform,
         ));
     }
@@ -84,17 +114,6 @@ struct LastNode {
 #[derive(Resource)]
 struct PreviewOn(bool);
 
-#[derive(Resource)]
-struct LinePreview {
-    start: Vec2,
-    end: Vec2,
-}
-
-// #[derive(Component)]
-// struct Edge {
-//     position: Vec2,
-// } // marker for edge entities
-
 fn main() {
     App::new()
         .insert_resource(ClearColor(Color::Srgba(GRAY)))
@@ -106,15 +125,16 @@ fn main() {
             dragging: None,
             connections: vec![],
         })
-        .insert_resource(LinePreview {
-            start: Vec2::new(0., 0.),
-            end: Vec2::new(0., 0.),
+        .insert_resource(MembersIds {
+            idmap: HashMap::new(),
         })
-        .insert_resource(PreviewOn(true))
         .insert_resource(LastNode { position: None })
+        .insert_resource(MemberCount { count: 0 })
         .add_plugins((DefaultPlugins, TrackCursorPlugin))
         .add_systems(Startup, setup_camera)
         .add_systems(Update, keyboard_input)
+        .add_systems(Startup, spawn_line_preview)
+        .add_systems(Update, update_line_preview)
         .run();
 }
 
@@ -129,8 +149,9 @@ fn keyboard_input(
     mut last: ResMut<LastNode>,
     cursor: Res<CursorLocation>,
     mut truss: ResMut<Truss>,
-    preview: ResMut<LinePreview>,
-    mut gizmos: Gizmos,
+    mut count: ResMut<MemberCount>,
+    ids: Res<MembersIds>,
+    assets: ResMut<Assets<Mesh>>,
 ) {
     match *mode {
         Mode::Command => {
@@ -143,7 +164,7 @@ fn keyboard_input(
             }
         }
         Mode::Insert => {
-            let cursorloc = cursor.world_position().unwrap();
+            let cursorloc = cursor.world_position().unwrap_or(Vec2::ZERO);
             if keys.just_pressed(KeyCode::Space) {
                 let node = Node(Vec2::new(cursorloc.x, cursorloc.y));
                 let snap_tolerance = 10.0;
@@ -155,16 +176,22 @@ fn keyboard_input(
                     commands.queue(Member {
                         start: last.position.unwrap_or(*old_node),
                         end: *old_node,
+                        id: count.count,
                     });
 
                     last.position = Some(*old_node);
                 } else {
                     truss.nodes.push(cursorloc);
+
+                    count.count += 1;
+
+                    print!("{}", count.count);
                     commands.queue(Node(cursorloc));
                     if last.position.is_some() {
                         commands.queue(Member {
                             start: last.position.unwrap(),
                             end: cursorloc,
+                            id: count.count,
                         });
                     }
 
@@ -175,7 +202,6 @@ fn keyboard_input(
                 *mode = Mode::Command;
             }
             if keys.just_pressed(KeyCode::KeyQ) {
-                update_line_preview(cursorloc, last.position.unwrap(), preview, gizmos);
                 // Left Ctrl was released
             }
             // we can check multiple at once with `.any_*`
@@ -202,41 +228,64 @@ fn delete_components(
         commands.entity(entity).remove::<Sprite>();
     }
 }
-// fn add_roller(
-//     mut commands: Commands,
+// fn update_line_preview(
 //     cursor: Vec2,
-//     mut meshes: ResMut<Assets<Mesh>>,
-//     mut truss: ResMut<Truss>,
-//
-//     mut materials: ResMut<Assets<ColorMaterial>>,
+//     ids: Res<MembersIds>,
+//     mut assets: ResMut<Assets<Mesh>>,
+//     mut commands: Commands,
 // ) {
-//     truss.connections.push(Connection::roller(cursor));
-//     let circle = meshes.add(Circle::new(5.));
-//     commands.spawn((
-//         Mesh2d(circle),
-//         MeshMaterial2d(materials.add(Color::srgb(0., 256., 0.))),
-//         Transform::from_xyz(cursor.x, cursor.y, 0.),
-//     ));
+//     let mesh_handle = ids.idmap.get(&0).unwrap();
+//     let mesh = assets.get_mut(mesh_handle).unwrap();
+//     mesh.transform_by(Transform::from_xyz(cursor.x, cursor.y, 0.));
 // }
-fn update_line_preview(
-    cursor: Vec2,
-    last: Vec2,
-    mut preview: ResMut<LinePreview>,
-    mut gizmos: Gizmos,
+fn spawn_line_preview(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut ids: ResMut<MembersIds>,
+    mut materails: ResMut<Assets<ColorMaterial>>,
 ) {
-    preview.start = last;
-    preview.end = cursor;
-    gizmos.line_2d(preview.start, preview.end, Color::srgb(256., 0., 0.));
+    let mesh_handle = meshes.add(RectangleMeshBuilder::new(20.0, 1.0).build());
+    let color_handle = materails.add(Color::WHITE);
+    ids.idmap.insert(0, mesh_handle.clone());
+
+    commands.spawn((
+        Mesh2d(mesh_handle),
+        MeshMaterial2d(color_handle),
+        Transform::from_xyz(0.0, 0.0, 0.0),
+    ));
 }
 
-// fn spawn_line_preview(
-//     mut commands: Commands,
-//     cursor: Res<CursorLocation>,
-//     last: Res<LastNode>,
-//     mut previewon: ResMut<PreviewOn>,
-// ) {
-//     commands.queue(LinePreview {
-//         start: last.position.unwrap_or(Vec2::ZERO),
-//         end: cursor.world_position().unwrap_or(Vec2::new(100., 100.)),
-//     });
-// }
+fn update_line_preview(
+    cursor: ResMut<CursorLocation>, // to read cursor position
+    ids: Res<MembersIds>,
+    last: Res<LastNode>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    // Replace mesh data with a line from last_point to cursor
+    let last_point = last.position.unwrap_or(Vec2::ZERO);
+    let mut cursor_loc = cursor.world_position().unwrap_or(Vec2::ZERO);
+
+    let length = last_point.distance(cursor_loc);
+    print!("lenght{}", length);
+    if cursor_loc.x == 0. {
+        cursor_loc.x = 1.0;
+
+        print!("cursor_loc x= 0")
+    }
+    if cursor_loc.y == 0. {
+        cursor_loc.y = 1.0;
+        print!("cursor_loc y= 0")
+    }
+    let diff = last_point - cursor_loc;
+    let mut theta = diff.x / diff.y;
+    theta = theta.atan();
+    let midpoint = (last_point + cursor_loc) / 2.;
+    let transform = Transform::from_xyz(midpoint.x, midpoint.y, 0.)
+        .with_rotation(Quat::from_rotation_z(-theta));
+
+    let mesh_handle = ids.idmap.get(&0).unwrap();
+    let mesh = meshes.get_mut(mesh_handle).unwrap();
+    *mesh = RectangleMeshBuilder::new(2., length)
+        .build()
+        .transformed_by(transform);
+}
