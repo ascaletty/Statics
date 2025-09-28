@@ -1,4 +1,5 @@
 use bevy::asset::RenderAssetUsages;
+use bevy::core_pipeline::prepass::node;
 use bevy::ecs::entity;
 use bevy::render::mesh::{Indices, Mesh, RectangleMeshBuilder};
 use bevy::state::commands;
@@ -111,13 +112,16 @@ impl Command for Node {
 struct LastNode {
     position: Option<Vec2>,
 }
+
+#[derive(Resource)]
+struct NodeCount(u32);
 #[derive(Resource)]
 struct PreviewOn(bool);
 
 fn main() {
     App::new()
         .insert_resource(ClearColor(Color::Srgba(GRAY)))
-        .insert_resource(Mode::Command)
+        .insert_resource(Mode::Insert)
         .insert_resource(Truss {
             nodes: vec![],
             edges: vec![],
@@ -125,6 +129,7 @@ fn main() {
             dragging: None,
             connections: vec![],
         })
+        .insert_resource(NodeCount(0))
         .insert_resource(MembersIds {
             idmap: HashMap::new(),
         })
@@ -133,13 +138,28 @@ fn main() {
         .add_plugins((DefaultPlugins, TrackCursorPlugin))
         .add_systems(Startup, setup_camera)
         .add_systems(Update, keyboard_input)
-        .add_systems(Startup, spawn_line_preview)
-        .add_systems(Update, update_line_preview)
+        .add_systems(Update, update_line_preview.run_if(any_node_spawned))
+        .add_systems(Update, preview_vis)
         .run();
 }
 
 fn setup_camera(mut commands: Commands) {
     commands.spawn(Camera2d);
+}
+
+fn any_node_spawned(count: Res<NodeCount>) -> bool {
+    count.0 > 0
+}
+fn preview_vis(
+    count: Res<NodeCount>,
+    commands: Commands,
+    meshes: ResMut<Assets<Mesh>>,
+    ids: ResMut<MembersIds>,
+    materials: ResMut<Assets<ColorMaterial>>,
+) {
+    if count.0 == 0 {
+        spawn_line_preview(commands, meshes, ids, materials);
+    }
 }
 
 fn keyboard_input(
@@ -150,8 +170,7 @@ fn keyboard_input(
     cursor: Res<CursorLocation>,
     mut truss: ResMut<Truss>,
     mut count: ResMut<MemberCount>,
-    ids: Res<MembersIds>,
-    assets: ResMut<Assets<Mesh>>,
+    mut node_count: ResMut<NodeCount>,
 ) {
     match *mode {
         Mode::Command => {
@@ -193,6 +212,7 @@ fn keyboard_input(
                             end: cursorloc,
                             id: count.count,
                         });
+                        node_count.0 += 1;
                     }
 
                     last.position = Some(node.0);
@@ -242,10 +262,10 @@ fn spawn_line_preview(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut ids: ResMut<MembersIds>,
-    mut materails: ResMut<Assets<ColorMaterial>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     let mesh_handle = meshes.add(RectangleMeshBuilder::new(20.0, 1.0).build());
-    let color_handle = materails.add(Color::WHITE);
+    let color_handle = materials.add(Color::WHITE);
     ids.idmap.insert(0, mesh_handle.clone());
 
     commands.spawn((
@@ -257,11 +277,14 @@ fn spawn_line_preview(
 
 fn update_line_preview(
     cursor: ResMut<CursorLocation>, // to read cursor position
-    ids: Res<MembersIds>,
+    ids: ResMut<MembersIds>,
     last: Res<LastNode>,
     mut meshes: ResMut<Assets<Mesh>>,
+    count: Res<MemberCount>,
+    mut commands: Commands,
+    materials: ResMut<Assets<ColorMaterial>>,
+    mode: Res<Mode>,
 ) {
-    // Replace mesh data with a line from last_point to cursor
     let last_point = last.position.unwrap_or(Vec2::ZERO);
     let mut cursor_loc = cursor.world_position().unwrap_or(Vec2::ZERO);
 
