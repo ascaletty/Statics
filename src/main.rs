@@ -115,9 +115,6 @@ struct LastNode {
 
 #[derive(Resource)]
 struct NodeCount(u32);
-#[derive(Resource)]
-struct PreviewOn(bool);
-
 fn main() {
     App::new()
         .insert_resource(ClearColor(Color::Srgba(GRAY)))
@@ -138,28 +135,13 @@ fn main() {
         .add_plugins((DefaultPlugins, TrackCursorPlugin))
         .add_systems(Startup, setup_camera)
         .add_systems(Update, keyboard_input)
-        .add_systems(Update, update_line_preview.run_if(any_node_spawned))
-        .add_systems(Update, preview_vis)
+        .add_systems(Update, update_line_preview)
+        .add_systems(Startup, spawn_line_preview)
         .run();
 }
 
 fn setup_camera(mut commands: Commands) {
     commands.spawn(Camera2d);
-}
-
-fn any_node_spawned(count: Res<NodeCount>) -> bool {
-    count.0 > 0
-}
-fn preview_vis(
-    count: Res<NodeCount>,
-    commands: Commands,
-    meshes: ResMut<Assets<Mesh>>,
-    ids: ResMut<MembersIds>,
-    materials: ResMut<Assets<ColorMaterial>>,
-) {
-    if count.0 == 0 {
-        spawn_line_preview(commands, meshes, ids, materials);
-    }
 }
 
 fn keyboard_input(
@@ -207,13 +189,15 @@ fn keyboard_input(
                     print!("{}", count.count);
                     commands.queue(Node(cursorloc));
                     if last.position.is_some() {
-                        commands.queue(Member {
+                        let member = Member {
                             start: last.position.unwrap(),
                             end: cursorloc,
                             id: count.count,
-                        });
-                        node_count.0 += 1;
+                        };
+                        truss.edges.push(member.clone());
+                        commands.queue(member);
                     }
+                    node_count.0 += 1;
 
                     last.position = Some(node.0);
                 }
@@ -236,27 +220,13 @@ fn keyboard_input(
         Mode::Dimension => {}
     }
 }
-fn delete_components(
-    mut commands: Commands,
-    points: Query<Entity, With<Mesh2d>>,
-    lines: Query<Entity, With<Sprite>>,
-) {
-    for entity in points.iter() {
-        commands.entity(entity).remove::<Mesh2d>();
-    }
-    for entity in lines.iter() {
-        commands.entity(entity).remove::<Sprite>();
-    }
-}
-// fn update_line_preview(
-//     cursor: Vec2,
-//     ids: Res<MembersIds>,
-//     mut assets: ResMut<Assets<Mesh>>,
-//     mut commands: Commands,
-// ) {
-//     let mesh_handle = ids.idmap.get(&0).unwrap();
-//     let mesh = assets.get_mut(mesh_handle).unwrap();
-//     mesh.transform_by(Transform::from_xyz(cursor.x, cursor.y, 0.));
+// fn delete_components(mut commands: Commands, points: Query<Entity, With<Mesh2d>>) {
+//     for entity in points.iter() {
+//         commands.entity(entity).remove::<Mesh2d>();
+//     }
+//     for entity in lines.iter() {
+//         commands.entity(entity).remove::<Sprite>();
+//     }
 // }
 fn spawn_line_preview(
     mut commands: Commands,
@@ -264,7 +234,7 @@ fn spawn_line_preview(
     mut ids: ResMut<MembersIds>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
-    let mesh_handle = meshes.add(RectangleMeshBuilder::new(20.0, 1.0).build());
+    let mesh_handle = meshes.add(RectangleMeshBuilder::new(0.0, 0.0).build());
     let color_handle = materials.add(Color::WHITE);
     ids.idmap.insert(0, mesh_handle.clone());
 
@@ -280,24 +250,16 @@ fn update_line_preview(
     ids: ResMut<MembersIds>,
     last: Res<LastNode>,
     mut meshes: ResMut<Assets<Mesh>>,
-    count: Res<MemberCount>,
-    mut commands: Commands,
-    materials: ResMut<Assets<ColorMaterial>>,
-    mode: Res<Mode>,
 ) {
     let last_point = last.position.unwrap_or(Vec2::ZERO);
     let mut cursor_loc = cursor.world_position().unwrap_or(Vec2::ZERO);
 
     let length = last_point.distance(cursor_loc);
-    print!("lenght{}", length);
     if cursor_loc.x == 0. {
         cursor_loc.x = 1.0;
-
-        print!("cursor_loc x= 0")
     }
     if cursor_loc.y == 0. {
         cursor_loc.y = 1.0;
-        print!("cursor_loc y= 0")
     }
     let diff = last_point - cursor_loc;
     let mut theta = diff.x / diff.y;
