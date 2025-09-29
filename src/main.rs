@@ -1,16 +1,15 @@
-use bevy::asset::RenderAssetUsages;
-use bevy::core_pipeline::prepass::node;
-use bevy::ecs::entity;
+use bevy::asset::{RenderAssetUsages, uuid};
 use bevy::render::mesh::{Indices, Mesh, RectangleMeshBuilder};
-use bevy::state::commands;
 
 use bevy::color::palettes::css::{CORAL, GRAY};
 use bevy::math::{VectorSpace, bounding::*};
+use bevy::state::commands;
+use bevy::winit::cursor;
 use bevy::{gizmos, prelude::*, sprite};
 use bevy_cursor::prelude::*;
 use std::collections::HashMap;
 use std::process::id;
-
+const SNAP_TOLERANCE: f32 = 10.;
 #[derive(Debug)]
 enum Connection {
     Pin(Vec2),
@@ -21,13 +20,13 @@ impl Command for Connection {
         match self {
             Connection::Roller(pos) => {
                 let mesh_handle = world.resource_scope(|_world, mut meshes: Mut<Assets<Mesh>>| {
-                    let circ = Circle::new(4.0);
+                    let circ = Circle::new(10.0);
                     meshes.add(circ)
                 });
 
                 let color_material =
                     world.resource_scope(|_world, mut materials: Mut<Assets<ColorMaterial>>| {
-                        let blue = Color::srgb(0.0, 0.0, 1.0);
+                        let blue = Color::srgb(0.0, 1.0, 0.0);
                         materials.add(blue)
                     });
 
@@ -160,11 +159,35 @@ fn main() {
         .add_plugins((DefaultPlugins, TrackCursorPlugin))
         .add_systems(Startup, setup_camera)
         .add_systems(Update, keyboard_input)
-        .add_systems(Update, update_line_preview)
-        .add_systems(Startup, spawn_line_preview)
+        .add_systems(Update, preview_on)
+        .add_systems(Startup, grid)
+        .add_systems(Update, zoom)
         .run();
 }
+fn preview_on(
+    truss: Res<Truss>,
+    mode: Res<Mode>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut ids: ResMut<MembersIds>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    cursor: ResMut<CursorLocation>,
+    last: Res<LastNode>,
+) {
+    let insert = match mode.into_inner() {
+        Mode::Insert => true,
+        _ => false,
+    };
+    let previewspawned = ids.idmap.contains_key(&0);
+    let last_exist = last.position.is_some();
+    if !previewspawned && last_exist {
+        spawn_line_preview(commands, &mut meshes, &mut ids, materials);
+    }
 
+    if truss.nodes.len() > 0 && insert && previewspawned && last_exist {
+        update_line_preview(cursor, ids, last, meshes);
+    }
+}
 fn setup_camera(mut commands: Commands) {
     commands.spawn(Camera2d);
 }
@@ -177,7 +200,8 @@ fn keyboard_input(
     cursor: Res<CursorLocation>,
     mut truss: ResMut<Truss>,
     mut count: ResMut<MemberCount>,
-    mut node_count: ResMut<NodeCount>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut ids: ResMut<MembersIds>,
 ) {
     match *mode {
         Mode::Command => {
@@ -193,11 +217,10 @@ fn keyboard_input(
             let cursorloc = cursor.world_position().unwrap_or(Vec2::ZERO);
             if keys.just_pressed(KeyCode::Space) {
                 let node = Node(Vec2::new(cursorloc.x, cursorloc.y));
-                let snap_tolerance = 10.0;
                 if let Some(old_node) = truss
                     .nodes
                     .iter()
-                    .find(|x| x.distance(cursorloc) < snap_tolerance)
+                    .find(|x| x.distance(cursorloc) < SNAP_TOLERANCE)
                 {
                     commands.queue(Member {
                         start: last.position.unwrap_or(*old_node),
@@ -211,7 +234,6 @@ fn keyboard_input(
 
                     count.count += 1;
 
-                    print!("{}", count.count);
                     commands.queue(Node(cursorloc));
                     if last.position.is_some() {
                         let member = Member {
@@ -222,16 +244,25 @@ fn keyboard_input(
                         truss.edges.push(member.clone());
                         commands.queue(member);
                     }
-                    node_count.0 += 1;
 
                     last.position = Some(node.0);
                 }
             }
             if keys.just_pressed(KeyCode::Escape) {
                 *mode = Mode::Command;
+                meshes.remove(ids.idmap.get(&0).unwrap().id());
+                ids.idmap.remove(&0);
             }
             if keys.just_pressed(KeyCode::KeyR) {
-                commands.queue(Connection::Roller(cursorloc));
+                if let Some(old_node) = truss
+                    .nodes
+                    .iter()
+                    .find(|x| x.distance(cursorloc) < SNAP_TOLERANCE)
+                {
+                    commands.queue(Connection::Roller(*old_node));
+                } else {
+                    commands.queue(Connection::Roller(cursorloc));
+                }
                 truss.connections.push(Connection::Roller(cursorloc));
             }
             // we can check multiple at once with `.any_*`
@@ -246,18 +277,11 @@ fn keyboard_input(
         Mode::Dimension => {}
     }
 }
-// fn delete_components(mut commands: Commands, points: Query<Entity, With<Mesh2d>>) {
-//     for entity in points.iter() {
-//         commands.entity(entity).remove::<Mesh2d>();
-//     }
-//     for entity in lines.iter() {
-//         commands.entity(entity).remove::<Sprite>();
-//     }
-// }
+
 fn spawn_line_preview(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut ids: ResMut<MembersIds>,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    ids: &mut ResMut<MembersIds>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     let mesh_handle = meshes.add(RectangleMeshBuilder::new(0.0, 0.0).build());
@@ -299,4 +323,62 @@ fn update_line_preview(
     *mesh = RectangleMeshBuilder::new(2., length)
         .build()
         .transformed_by(transform);
+}
+use bevy::render::mesh::PrimitiveTopology;
+
+fn grid(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    let mut mesh = Mesh::new(PrimitiveTopology::LineList, RenderAssetUsages::default());
+
+    let mut positions = Vec::new();
+    let mut indices = Vec::new();
+
+    let step = 50.0;
+    let half = 500.0;
+
+    let mut i = 0;
+    for x in (-10..=10).map(|i| i as f32 * step) {
+        positions.push([x, -half, 0.0]);
+        positions.push([x, half, 0.0]);
+        indices.push(i);
+        indices.push(i + 1);
+        i += 2;
+    }
+
+    for y in (-10..=10).map(|i| i as f32 * step) {
+        positions.push([-half, y, 0.0]);
+        positions.push([half, y, 0.0]);
+        indices.push(i);
+        indices.push(i + 1);
+        i += 2;
+    }
+
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+
+    commands.spawn((
+        Mesh2d(meshes.add(mesh)),
+        MeshMaterial2d(materials.add(Color::WHITE)),
+    ));
+}
+fn zoom(
+    mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
+    camera_query: Single<&mut Projection, With<Camera>>,
+) {
+    let mut cam = camera_query.into_inner();
+    if keys.just_pressed(KeyCode::KeyJ) {
+        match *cam {
+            Projection::Orthographic(ref mut ortho) => ortho.scale -= 1.,
+            _ => panic!("help i cant find the right cam"),
+        }
+    }
+    if keys.just_pressed(KeyCode::KeyK) {
+        match *cam {
+            Projection::Orthographic(ref mut ortho) => ortho.scale += 1.,
+            _ => panic!("help i cant find the right cam"),
+        }
+    }
 }
