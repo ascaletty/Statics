@@ -16,6 +16,31 @@ enum Connection {
     Pin(Vec2),
     Roller(Vec2),
 }
+impl Command for Connection {
+    fn apply(self, world: &mut World) -> () {
+        match self {
+            Connection::Roller(pos) => {
+                let mesh_handle = world.resource_scope(|_world, mut meshes: Mut<Assets<Mesh>>| {
+                    let circ = Circle::new(4.0);
+                    meshes.add(circ)
+                });
+
+                let color_material =
+                    world.resource_scope(|_world, mut materials: Mut<Assets<ColorMaterial>>| {
+                        let blue = Color::srgb(0.0, 0.0, 1.0);
+                        materials.add(blue)
+                    });
+
+                world.spawn((
+                    Mesh2d(mesh_handle.clone()),
+                    MeshMaterial2d(color_material.clone()),
+                    Transform::from_xyz(pos.x, pos.y, 0.),
+                ));
+            }
+            Connection::Pin(pos) => {}
+        }
+    }
+}
 
 #[derive(Resource, Clone, Copy, Debug)]
 enum Mode {
@@ -205,8 +230,9 @@ fn keyboard_input(
             if keys.just_pressed(KeyCode::Escape) {
                 *mode = Mode::Command;
             }
-            if keys.just_pressed(KeyCode::KeyQ) {
-                // Left Ctrl was released
+            if keys.just_pressed(KeyCode::KeyR) {
+                commands.queue(Connection::Roller(cursorloc));
+                truss.connections.push(Connection::Roller(cursorloc));
             }
             // we can check multiple at once with `.any_*`
             if keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
