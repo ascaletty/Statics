@@ -1,144 +1,14 @@
-use bevy::asset::{RenderAssetUsages, uuid};
-use bevy::render::mesh::{Indices, Mesh, RectangleMeshBuilder};
+use bevy::render::mesh::{Mesh, RectangleMeshBuilder};
+use std::io;
 
-use bevy::color::palettes::css::{CORAL, GRAY};
-use bevy::math::{VectorSpace, bounding::*};
-use bevy::state::commands;
-use bevy::winit::cursor;
-use bevy::{gizmos, prelude::*, sprite};
+use bevy::color::palettes::css::GRAY;
+use bevy::prelude::*;
 use bevy_cursor::prelude::*;
 use std::collections::HashMap;
-use std::process::id;
 const SNAP_TOLERANCE: f32 = 10.;
-#[derive(Debug)]
-enum Connection {
-    Pin(Vec2),
-    Roller(Vec2),
-}
-impl Command for Connection {
-    fn apply(self, world: &mut World) -> () {
-        match self {
-            Connection::Roller(pos) => {
-                let mesh_handle = world.resource_scope(|_world, mut meshes: Mut<Assets<Mesh>>| {
-                    let circ = Circle::new(10.0);
-                    meshes.add(circ)
-                });
-
-                let color_material =
-                    world.resource_scope(|_world, mut materials: Mut<Assets<ColorMaterial>>| {
-                        let blue = Color::srgb(0.0, 1.0, 0.0);
-                        materials.add(blue)
-                    });
-
-                world.spawn((
-                    Mesh2d(mesh_handle.clone()),
-                    MeshMaterial2d(color_material.clone()),
-                    Transform::from_xyz(pos.x, pos.y, 0.),
-                ));
-            }
-            Connection::Pin(pos) => {}
-        }
-    }
-}
-
-#[derive(Resource, Clone, Copy, Debug)]
-enum Mode {
-    Insert,
-    Edit,
-    Dimension,
-    Command,
-}
-
-#[derive(Resource)]
-struct Truss {
-    nodes: Vec<Vec2>, // node entities in order
-    edges: Vec<Member>,
-    selected_node: Option<Node>,
-    dragging: Option<Node>,
-    connections: Vec<Connection>,
-}
-
-#[derive(Resource)]
-struct MembersIds {
-    idmap: HashMap<u32, Handle<Mesh>>,
-}
-
-#[derive(Resource)]
-struct MemberCount {
-    count: u32,
-}
-#[derive(Component, Clone, Debug)]
-struct Member {
-    start: Vec2,
-    end: Vec2,
-    id: u32,
-}
-
-impl Command for Member {
-    fn apply(self, world: &mut World) {
-        let length = self.start.distance(self.end);
-        let diff = self.start - self.end;
-        let mut theta = diff.x / diff.y;
-        theta = theta.atan();
-        let midpoint = (self.start + self.end) / 2.;
-        let transform = Transform::from_xyz(midpoint.x, midpoint.y, 0.)
-            .with_rotation(Quat::from_rotation_z(-theta));
-        let mesh_handle = world.resource_scope(|_world, mut meshes: Mut<Assets<Mesh>>| {
-            let rect = Rectangle::new(2., length);
-            meshes.add(rect)
-        });
-        let color_material =
-            world.resource_scope(|_world, mut materials: Mut<Assets<ColorMaterial>>| {
-                let blue = Color::srgb(0.0, 0.0, 1.0);
-                materials.add(blue)
-            });
-        world.resource_scope(|_world, mut member_ids: Mut<MembersIds>| {
-            member_ids.idmap.insert(self.id, mesh_handle.clone())
-        });
-        println!(
-            "Creating idmap with id {}, mesh_handle {:?}",
-            self.id, mesh_handle
-        );
-        world.spawn((
-            self,
-            Mesh2d(mesh_handle.clone()),
-            MeshMaterial2d(color_material.clone()),
-            transform,
-        ));
-    }
-}
-
-#[derive(Component, Clone, Debug)]
-struct Node(Vec2);
-impl Command for Node {
-    fn apply(self, world: &mut World) {
-        let mesh_handle = world.resource_scope(|_world, mut meshes: Mut<Assets<Mesh>>| {
-            let circle = Circle::new(5.);
-            meshes.add(circle)
-        });
-        let color_material =
-            world.resource_scope(|_world, mut materials: Mut<Assets<ColorMaterial>>| {
-                let blue = Color::srgb(0.0, 0.0, 1.0);
-                materials.add(blue)
-            });
-        let x = self.0.x;
-        let y = self.0.y;
-        world.spawn((
-            self,
-            Mesh2d(mesh_handle.clone()),
-            MeshMaterial2d(color_material.clone()),
-            Transform::from_xyz(x, y, 0.),
-        ));
-    }
-}
-
-#[derive(Resource)]
-struct LastNode {
-    position: Option<Vec2>,
-}
-
-#[derive(Resource)]
-struct NodeCount(u32);
+mod physics;
+use truss::structs::Node;
+use truss::structs::*;
 fn main() {
     App::new()
         .insert_resource(ClearColor(Color::Srgba(GRAY)))
@@ -149,42 +19,33 @@ fn main() {
             selected_node: None,
             dragging: None,
             connections: vec![],
-        })
-        .insert_resource(NodeCount(0))
-        .insert_resource(MembersIds {
-            idmap: HashMap::new(),
+            membermap: HashMap::new(),
+            nodemap: HashMap::new(),
+            connectionmap: HashMap::new(),
         })
         .insert_resource(LastNode { position: None })
-        .insert_resource(MemberCount { count: 0 })
         .add_plugins((DefaultPlugins, TrackCursorPlugin))
         .add_systems(Startup, setup_camera)
         .add_systems(Update, keyboard_input)
         .add_systems(Update, preview_on)
-        .add_systems(Startup, grid)
-        .add_systems(Update, zoom)
         .run();
 }
 fn preview_on(
-    truss: Res<Truss>,
     mode: Res<Mode>,
-    mut commands: Commands,
+    commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut ids: ResMut<MembersIds>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut ids: ResMut<Truss>,
+    materials: ResMut<Assets<ColorMaterial>>,
     cursor: ResMut<CursorLocation>,
     last: Res<LastNode>,
 ) {
-    let insert = match mode.into_inner() {
-        Mode::Insert => true,
-        _ => false,
-    };
-    let previewspawned = ids.idmap.contains_key(&0);
+    let insert = matches!(*mode, Mode::Insert);
+    let previewspawned = ids.membermap.contains_key(&0);
     let last_exist = last.position.is_some();
     if !previewspawned && last_exist {
         spawn_line_preview(commands, &mut meshes, &mut ids, materials);
     }
-
-    if truss.nodes.len() > 0 && insert && previewspawned && last_exist {
+    if insert && previewspawned && last_exist {
         update_line_preview(cursor, ids, last, meshes);
     }
 }
@@ -199,9 +60,7 @@ fn keyboard_input(
     mut last: ResMut<LastNode>,
     cursor: Res<CursorLocation>,
     mut truss: ResMut<Truss>,
-    mut count: ResMut<MemberCount>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut ids: ResMut<MembersIds>,
 ) {
     match *mode {
         Mode::Command => {
@@ -212,58 +71,109 @@ fn keyboard_input(
             if keys.just_pressed(KeyCode::KeyD) {
                 *mode = Mode::Dimension;
             }
+            if keys.just_pressed(KeyCode::KeyR) {
+                physics::calculate_member_stress(truss.into_inner());
+            }
         }
         Mode::Insert => {
             let cursorloc = cursor.world_position().unwrap_or(Vec2::ZERO);
             if keys.just_pressed(KeyCode::Space) {
-                let node = Node(Vec2::new(cursorloc.x, cursorloc.y));
                 if let Some(old_node) = truss
+                    .clone()
                     .nodes
                     .iter()
-                    .find(|x| x.distance(cursorloc) < SNAP_TOLERANCE)
+                    .find(|x| x.0.distance(cursorloc) < SNAP_TOLERANCE)
                 {
-                    commands.queue(Member {
-                        start: last.position.unwrap_or(*old_node),
-                        end: *old_node,
-                        id: count.count,
-                    });
+                    let memcount = truss.edges.len();
+                    let member = Member {
+                        start: last.position.unwrap_or(old_node.0),
+                        end: old_node.0,
+                        id: memcount + 1,
+                    };
 
-                    last.position = Some(*old_node);
+                    commands.queue(member.clone());
+                    truss.edges.push(member);
+
+                    last.position = Some(old_node.0);
                 } else {
-                    truss.nodes.push(cursorloc);
+                    let nodecount = truss.nodes.len();
 
-                    count.count += 1;
-
-                    commands.queue(Node(cursorloc));
+                    let memcount = truss.edges.len();
+                    let node = Node(cursorloc, nodecount + 1);
+                    commands.queue(node.clone());
+                    truss.nodes.push(node.clone());
                     if last.position.is_some() {
                         let member = Member {
                             start: last.position.unwrap(),
                             end: cursorloc,
-                            id: count.count,
+                            id: memcount + 1,
                         };
-                        truss.edges.push(member.clone());
-                        commands.queue(member);
+                        commands.queue(member.clone());
+                        truss.edges.push(member);
                     }
-
                     last.position = Some(node.0);
                 }
             }
             if keys.just_pressed(KeyCode::Escape) {
                 *mode = Mode::Command;
-                meshes.remove(ids.idmap.get(&0).unwrap().id());
-                ids.idmap.remove(&0);
+                meshes.remove(truss.membermap.get(&0).unwrap().id());
+                truss.membermap.remove(&0);
             }
             if keys.just_pressed(KeyCode::KeyR) {
+                let connection_count = truss.connections.len();
                 if let Some(old_node) = truss
                     .nodes
                     .iter()
-                    .find(|x| x.distance(cursorloc) < SNAP_TOLERANCE)
+                    .find(|x| x.0.distance(cursorloc) < SNAP_TOLERANCE)
                 {
-                    commands.queue(Connection::Roller(*old_node));
+                    commands.queue(Connection::Roller(old_node.0, connection_count));
                 } else {
-                    commands.queue(Connection::Roller(cursorloc));
+                    commands.queue(Connection::Roller(cursorloc, connection_count));
                 }
-                truss.connections.push(Connection::Roller(cursorloc));
+                truss
+                    .connections
+                    .push(Connection::Roller(cursorloc, connection_count));
+            }
+            if keys.just_pressed(KeyCode::KeyP) {
+                let connection_count = truss.connections.len();
+                if let Some(old_node) = truss
+                    .nodes
+                    .iter()
+                    .find(|x| x.0.distance(cursorloc) < SNAP_TOLERANCE)
+                {
+                    commands.queue(Connection::Pin(old_node.0, connection_count));
+                } else {
+                    commands.queue(Connection::Pin(cursorloc, connection_count));
+                }
+                truss
+                    .connections
+                    .push(Connection::Pin(cursorloc, connection_count));
+            }
+            if keys.just_pressed(KeyCode::KeyF) {
+                let connection_count = truss.connections.len();
+                println!("enter magnitude");
+                let mut mag = String::new();
+                io::stdin()
+                    .read_line(&mut mag)
+                    .expect("failed to read message");
+
+                let force = Force {
+                    magnitude: mag.trim().parse().unwrap_or(0.),
+                    start: last.position.unwrap(),
+                    end: cursorloc,
+                    id: connection_count,
+                };
+
+                if let Some(old_node) = truss
+                    .nodes
+                    .iter()
+                    .find(|x| x.0.distance(cursorloc) < SNAP_TOLERANCE)
+                {
+                    commands.queue(Connection::Force(force.clone()));
+                } else {
+                    commands.queue(Connection::Force(force.clone()));
+                }
+                truss.connections.push(Connection::Force(force));
             }
             // we can check multiple at once with `.any_*`
             if keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
@@ -281,12 +191,12 @@ fn keyboard_input(
 fn spawn_line_preview(
     mut commands: Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
-    ids: &mut ResMut<MembersIds>,
+    ids: &mut ResMut<Truss>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     let mesh_handle = meshes.add(RectangleMeshBuilder::new(0.0, 0.0).build());
     let color_handle = materials.add(Color::WHITE);
-    ids.idmap.insert(0, mesh_handle.clone());
+    ids.membermap.insert(0, mesh_handle.clone());
 
     commands.spawn((
         Mesh2d(mesh_handle),
@@ -297,7 +207,7 @@ fn spawn_line_preview(
 
 fn update_line_preview(
     cursor: ResMut<CursorLocation>, // to read cursor position
-    ids: ResMut<MembersIds>,
+    ids: ResMut<Truss>,
     last: Res<LastNode>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
@@ -318,67 +228,35 @@ fn update_line_preview(
     let transform = Transform::from_xyz(midpoint.x, midpoint.y, 0.)
         .with_rotation(Quat::from_rotation_z(-theta));
 
-    let mesh_handle = ids.idmap.get(&0).unwrap();
+    let mesh_handle = ids.membermap.get(&0).unwrap();
     let mesh = meshes.get_mut(mesh_handle).unwrap();
     *mesh = RectangleMeshBuilder::new(2., length)
         .build()
         .transformed_by(transform);
 }
-use bevy::render::mesh::PrimitiveTopology;
 
-fn grid(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-) {
-    let mut mesh = Mesh::new(PrimitiveTopology::LineList, RenderAssetUsages::default());
-
-    let mut positions = Vec::new();
-    let mut indices = Vec::new();
-
-    let step = 50.0;
-    let half = 500.0;
-
-    let mut i = 0;
-    for x in (-10..=10).map(|i| i as f32 * step) {
-        positions.push([x, -half, 0.0]);
-        positions.push([x, half, 0.0]);
-        indices.push(i);
-        indices.push(i + 1);
-        i += 2;
-    }
-
-    for y in (-10..=10).map(|i| i as f32 * step) {
-        positions.push([-half, y, 0.0]);
-        positions.push([half, y, 0.0]);
-        indices.push(i);
-        indices.push(i + 1);
-        i += 2;
-    }
-
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-
-    commands.spawn((
-        Mesh2d(meshes.add(mesh)),
-        MeshMaterial2d(materials.add(Color::WHITE)),
-    ));
-}
-fn zoom(
-    mut commands: Commands,
-    keys: Res<ButtonInput<KeyCode>>,
-    camera_query: Single<&mut Projection, With<Camera>>,
-) {
-    let mut cam = camera_query.into_inner();
-    if keys.just_pressed(KeyCode::KeyJ) {
-        match *cam {
-            Projection::Orthographic(ref mut ortho) => ortho.scale -= 1.,
-            _ => panic!("help i cant find the right cam"),
-        }
-    }
-    if keys.just_pressed(KeyCode::KeyK) {
-        match *cam {
-            Projection::Orthographic(ref mut ortho) => ortho.scale += 1.,
-            _ => panic!("help i cant find the right cam"),
-        }
-    }
-}
+// fn zoom(
+//     commands: Commands,
+//     keys: Res<ButtonInput<KeyCode>>,
+//     camera_query: Single<&mut Projection, With<Camera>>,
+// ) {
+//     let mut cam = camera_query.into_inner();
+//     if keys.just_pressed(KeyCode::KeyJ) {
+//         match *cam {
+//             Projection::Orthographic(ref mut ortho) => ortho.scale -= 1.,
+//             _ => panic!("help i cant find the right cam"),
+//         }
+//     }
+//     if keys.just_pressed(KeyCode::KeyK) {
+//         match *cam {
+//             Projection::Orthographic(ref mut ortho) => ortho.scale += 1.,
+//             _ => panic!("help i cant find the right cam"),
+//         }
+//     }
+//     if keys.just_pressed(KeyCode::KeyL) {
+//         match *cam {
+//             Projection::Orthographic(ref mut ortho) => ortho.viewport_origin + 0.1,
+//             _ => panic!("help i cant find the right cam"),
+//         };
+//     }
+// }
