@@ -116,8 +116,12 @@ fn keyboard_input(
             }
             if keys.just_pressed(KeyCode::Escape) {
                 *mode = Mode::Command;
+                let memcount = truss.edges.len();
                 meshes.remove(truss.membermap.get(&0).unwrap().id());
                 truss.membermap.remove(&0);
+                if last.position.is_none() {
+                    truss.membermap.remove(&memcount);
+                }
             }
             if keys.just_pressed(KeyCode::KeyR) {
                 let connection_count = truss.connections.len();

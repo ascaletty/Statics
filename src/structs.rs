@@ -81,17 +81,13 @@ impl Command for Connection {
 
                 let color_material =
                     world.resource_scope(|_world, mut materials: Mut<Assets<ColorMaterial>>| {
-                        let blue = Color::srgb(0.0, 0.0, 1.0);
+                        let blue = Color::srgb(1.0, 0.0, 0.0);
                         materials.add(blue)
                     });
-                world.resource_scope(|_world, mut member_ids: Mut<Truss>| {
-                    member_ids.membermap.insert(id, mesh_handle.clone())
-                });
-                world.spawn((
-                    Mesh2d(mesh_handle.clone()),
-                    MeshMaterial2d(color_material.clone()),
-                    transform,
-                ));
+                // world.resource_scope(|_world, mut member_ids: Mut<Truss>| {
+                //     member_ids.connectionmap.insert(id, mesh_handle.clone())
+                // });
+
                 world.spawn((
                     Mesh2d(line_handle.clone()),
                     MeshMaterial2d(color_material.clone()),
