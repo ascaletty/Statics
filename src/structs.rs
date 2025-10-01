@@ -127,18 +127,18 @@ pub struct Truss {
 
 #[derive(Component, Clone, Debug)]
 pub struct Member {
-    pub start: Vec2,
-    pub end: Vec2,
+    pub start: Node,
+    pub end: Node,
     pub id: usize,
 }
 
 impl Command for Member {
     fn apply(self, world: &mut World) {
-        let length = self.start.distance(self.end);
-        let diff = self.start - self.end;
+        let length = self.start.pos.distance(self.end.pos);
+        let diff = self.start.pos - self.end.pos;
         let mut theta = diff.x / diff.y;
         theta = theta.atan();
-        let midpoint = (self.start + self.end) / 2.;
+        let midpoint = (self.start.pos + self.end.pos) / 2.;
         let transform = Transform::from_xyz(midpoint.x, midpoint.y, 0.)
             .with_rotation(Quat::from_rotation_z(-theta));
         let mesh_handle = world.resource_scope(|_world, mut meshes: Mut<Assets<Mesh>>| {
@@ -167,7 +167,10 @@ impl Command for Member {
 }
 
 #[derive(Component, Clone, Debug)]
-pub struct Node(pub Vec2, pub usize);
+pub struct Node {
+    pub pos: Vec2,
+    pub id: usize,
+}
 impl Command for Node {
     fn apply(self, world: &mut World) {
         let mesh_handle = world.resource_scope(|_world, mut meshes: Mut<Assets<Mesh>>| {
@@ -180,10 +183,10 @@ impl Command for Node {
                 materials.add(blue)
             });
         world.resource_scope(|_world, mut member_ids: Mut<Truss>| {
-            member_ids.nodemap.insert(self.1, mesh_handle.clone())
+            member_ids.nodemap.insert(self.id, mesh_handle.clone())
         });
-        let x = self.0.x;
-        let y = self.0.y;
+        let x = self.pos.x;
+        let y = self.pos.y;
         world.spawn((
             self,
             Mesh2d(mesh_handle.clone()),

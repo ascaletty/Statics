@@ -2,19 +2,13 @@ use std::f32::consts::PI;
 
 use bevy::{
     math::{Vec2, ops::atan},
+    platform::collections::HashSet,
     tasks::futures_lite::stream::iter,
 };
 use nalgebra::{
     Const, DMatrix, DimAdd, Matrix1xX, Matrix2xX, MatrixXx1, MatrixXx2, VecStorage, Vector, VectorN,
 };
 use truss::structs::*;
-#[derive(Debug)]
-struct PointToPoint {
-    memberid: usize,
-    start: Node,
-    end: Node,
-    angle_to_y: f32,
-}
 
 pub fn calculate_member_stress(truss: &mut Truss) -> ResultMatrix {
     let size = 2 * truss.edges.len();
@@ -45,13 +39,15 @@ pub fn calculate_member_stress(truss: &mut Truss) -> ResultMatrix {
                 let matching_node = truss
                     .nodes
                     .iter()
-                    .find(|x| x.0.distance(*pos) < 0.001)
+                    .find(|x| x.pos == *pos)
                     .expect("need connections to be at nodes");
-                matrix[(matching_node.1 - 1, halfsize)] = 1.;
-                println!("put pin at {},{}", matching_node.1 - 1, halfsize);
-                matrix[(matching_node.1, halfsize + 1)] = 1.;
+                println!("node id found{} for pin", matching_node.id);
+                matrix[(matching_node.id, halfsize)] = 1.;
 
-                println!("put pin at {},{}", matching_node.1, halfsize + 1);
+                println!("put pin at {},{}", matching_node.id, halfsize);
+                matrix[(matching_node.id + 1, halfsize + 1)] = 1.;
+
+                println!("put pin at {},{}", matching_node.pos, halfsize + 1);
                 2
             }
             Connection::Roller(pos, _id) => {
@@ -59,13 +55,16 @@ pub fn calculate_member_stress(truss: &mut Truss) -> ResultMatrix {
                 let matching_node = truss
                     .nodes
                     .iter()
-                    .find(|x| x.0.distance(*pos) < 0.001)
+                    .find(|x| x.pos == *pos)
                     .expect("need connections to be at nodes");
+
+                println!("node id found{} for roller", matching_node.id);
+
                 //only doing the y reactions rn
                 //will need to add support for rollers with x reactions
-                matrix[(matching_node.1 + 1, halfsize)] = -1.;
+                matrix[(matching_node.id + 2, halfsize)] = 1.;
 
-                println!("put rollecr at {},{}", matching_node.1 + 1, halfsize);
+                println!("put rollecr at {},{}", matching_node.id, halfsize);
                 1
             }
             Connection::Force(_force) => 0,
@@ -79,95 +78,36 @@ pub fn calculate_member_stress(truss: &mut Truss) -> ResultMatrix {
     let sanity_check = truss.edges.len() + reactions;
     if sanity_check >= size {
         println!("Solvable!");
-        let mut anglevec: Vec<PointToPoint> = vec![];
-        for member in &truss.edges {
-            let start_node = truss.nodes.iter().find(|x| x.0 == member.start).unwrap();
-            let end_node = truss.nodes.iter().find(|x| x.0 == member.end).unwrap();
 
-            let diff = start_node.0 - end_node.0;
+        for member in truss.edges.clone() {
+            let start = member.start; // coords of start node
+            let end = member.end; // coords of end node
+            let dx = end.pos.x - start.pos.x;
+            let dy = end.pos.y - start.pos.y;
+            let length = (dx * dx + dy * dy).sqrt();
 
-            let angle_to_y1 = diff.angle_to(Vec2::new(1.0, 0.));
-            matrix[m]
+            let col = member.id; // member force column
 
-            anglevec.push(PointToPoint {
-                memberid: member.id,
-                start: start_node.clone(),
-                end: end_node.clone(),
-                angle_to_y: angle_to_y1,
-            });
-        }
-        println!("anglevec {:?}", anglevec);
-        let mut row_count = 0;
+            let row_x_start = 2 * member.id;
+            let row_y_start = 2 * start.id + 1;
+            let row_x_end = 2 * end.id;
+            let row_y_end = 2 * end.id + 1;
 
-        for node in &truss.nodes {
-            let start = anglevec.iter().find(|x| x.start.0 == node.0).unwrap();
-            let end = anglevec.iter().find(|x| x.end.0 == node.0).unwrap();
-            println!(
-                "start member for node {} @ {} is {:?}",
-                node.1, node.0, start
-            );
+            // Start node
+            matrix[(row_x_start, col)] = dx / length;
+            matrix[(row_y_start, col)] = dy / length;
 
-            println!("end member for node {} @ {} is {:?}", node.1, node.0, end);
-            let diff2 = end.start.0 - end.end.0;
-            println!("diff1(start) {}, diff2(end) {}", diff1, diff2);
-            let d1 = start.start.0.distance(start.end.0);
-            let d2 = end.start.0.distance(end.end.0);
-            println!("d1(start) {}, d2(end) {}", d1, d2);
-            let angle_between = ((diff1.dot(diff2)) / (d1 * d2)).acos();
-            let angle_to_y1 = diff1.angle_to(Vec2::new(1.0, 0.));
-            let angle_to_y2 = diff2.angle_to(Vec2::new(1.0, 0.));
-
-            println!("angle for node {} is pi/2", node.1);
-
-            println!("angle for node {} is {}", node.1, angle_between);
-            //diff1
-            matrix[(node.1 - 1, node.1 - 1)] = angle_to_y1.cos();
-            println!(
-                "Row {} Col {} <= {}",
-                node.1 - 1,
-                node.1 - 1,
-                matrix[(node.1 - 1, node.1 - 1)]
-            );
-
-            println!("{}", matrix);
-
-            matrix[(node.1, node.1)] = angle_to_y1.sin();
-            println!(
-                "Row {} Col {} <= {}",
-                node.1,
-                node.1,
-                matrix[(node.1, node.1)]
-            );
-
-            println!("{}", matrix);
-
-            //diff2
-            matrix[(node.1 - 1, node.1 - 1)] = angle_to_y2.cos();
-            println!(
-                "Row {} Col {} <= {}",
-                node.1 - 1,
-                node.1 - 1,
-                matrix[(node.1 - 1, node.1 - 1)]
-            );
-
-            println!("{}", matrix);
-
-            matrix[(node.1, node.1)] = angle_to_y2.sin();
-            println!(
-                "Row {} Col {} <= {}",
-                node.1,
-                node.1,
-                matrix[(node.1, node.1)]
-            );
-            println!("{}", matrix);
+            // End node (negative)
+            matrix[(row_x_end, col)] = -dx / length;
+            matrix[(row_y_end, col)] = -dy / length;
         }
         for force in &truss.connections {
             match force {
                 Connection::Force(force) => {
-                    let nodes_with_force = truss.nodes.iter().filter(|x| x.0 == force.start);
+                    let nodes_with_force = truss.nodes.iter().filter(|x| x.pos == force.start);
                     for node in nodes_with_force {
                         print!("node with force {:?}", node);
-                        zeros[(node.1 - 1, 0)] = force.magnitude;
+                        zeros[(node.id, 0)] = force.magnitude;
                     }
                 }
 
