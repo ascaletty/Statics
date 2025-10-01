@@ -264,3 +264,123 @@ fn update_line_preview(
 //         };
 //     }
 // }
+
+#[cfg(test)]
+mod tests {
+    use std::f32::consts::PI;
+
+    use super::*;
+    use nalgebra::DMatrix;
+    use nalgebra::Matrix6x1;
+    use nalgebra::MatrixXx1;
+    use truss::structs::ResultMatrix;
+    fn test_triangle() -> ResultMatrix {
+        let mut truss = Truss {
+            edges: vec![],
+            nodes: vec![],
+            nodemap: HashMap::new(),
+            connections: vec![],
+            connectionmap: HashMap::new(),
+            selected_node: None,
+            dragging: None,
+            membermap: HashMap::new(),
+        };
+        let one = Vec2::new(0., 0.);
+        let two = Vec2::new(1., 0.);
+        let three = Vec2::new(0., 1.);
+        let force_end = Vec2::new(-1., 0.);
+        let n1 = Node(one, 1);
+
+        let n2 = Node(two, 2);
+
+        let n3 = Node(three, 3);
+        let m1 = Member {
+            start: one,
+            end: two,
+            id: 1,
+        };
+        let m2 = Member {
+            start: two,
+            end: three,
+            id: 2,
+        };
+        let m3 = Member {
+            start: three,
+            end: one,
+            id: 3,
+        };
+        let p1 = Connection::Pin(one, 1);
+        let r1 = Connection::Roller(two, 2);
+        let f1 = Connection::Force(Force {
+            start: one,
+            end: force_end,
+            id: 3,
+            magnitude: 2.,
+        });
+        truss
+            .nodes
+            .append(&mut vec![n1.clone(), n2.clone(), n3.clone()]);
+        truss
+            .edges
+            .append(&mut vec![m1.clone(), m2.clone(), m3.clone()]);
+        truss
+            .connections
+            .append(&mut vec![p1.clone(), r1.clone(), f1.clone()]);
+        physics::calculate_member_stress(&mut truss)
+    }
+
+    fn basic_triangle() -> ResultMatrix {
+        let output = test_triangle();
+        println!("output {:?}", output);
+        let awnsers = MatrixXx1::from_vec(vec![0., 0., 2., 0., 1.41, 0.]);
+        let angle: f32 = PI / 4.;
+        let cos = angle.cos();
+        let sin = angle.sin();
+        let values = vec![
+            1., 0., 0., 1., 0., 0., 0., 0., 1., 0., 1., 0., 1., -cos, 0., 0., 0., 0., 0., sin, 0.,
+            0., 0., -1., 0., 1., 0., 0., 0., 0., 0., -sin, 1., 0., 0., 0.,
+        ];
+        let forcing = vec![2., 0., 0., 0., 0., 0.];
+        let forcing_matrix = MatrixXx1::from_vec(forcing);
+
+        let matrix = DMatrix::from_vec(6, 6, values);
+        let inverse = matrix
+            .clone()
+            .pseudo_inverse(0.0000001)
+            .expect("failed to find inverse");
+        let mut final_res = MatrixXx1::zeros(6);
+        inverse.mul_to(&forcing_matrix, &mut final_res);
+        println!("inverse {:?}", inverse);
+        println!("final_res {:?}", final_res);
+        ResultMatrix {
+            result: awnsers,
+            matrix,
+            forcing: forcing_matrix,
+        }
+    }
+
+    // #[test]
+    // fn forcing_matrix__match() {
+    //     let true_output = basic_triangle();
+    //     let output = test_triangle();
+    //
+    //     assert_eq!(output.forcing, true_output.forcing);
+    // }
+    //
+    #[test]
+    fn val_matrix_match() {
+        let true_output = basic_triangle();
+
+        let output = test_triangle();
+        assert_eq!(output.matrix, true_output.matrix);
+    }
+    //
+    // #[test]
+    // fn awnsers_match() {
+    //     let true_output = basic_triangle();
+    //
+    //     let output = test_triangle();
+    //
+    //     assert_eq!(output.result, true_output.result);
+    // }
+}
