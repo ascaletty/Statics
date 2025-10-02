@@ -40,7 +40,11 @@ pub fn calculate_member_stress(truss: &mut Truss) -> ResultMatrix {
                     .nodes
                     .iter()
                     .find(|x| x.pos == *pos)
+<<<<<<< HEAD
                     .expect("need pins to be at nodes");
+=======
+                    .expect("need connections to be at nodes");
+>>>>>>> refs/remotes/origin/master
                 println!("node id found{} for pin", matching_node.id);
                 matrix[(matching_node.id, halfsize)] = 1.;
 
@@ -56,7 +60,11 @@ pub fn calculate_member_stress(truss: &mut Truss) -> ResultMatrix {
                     .nodes
                     .iter()
                     .find(|x| x.pos == *pos)
+<<<<<<< HEAD
                     .expect("need roller to be at nodes");
+=======
+                    .expect("need connections to be at nodes");
+>>>>>>> refs/remotes/origin/master
 
                 println!("node id found{} for roller", matching_node.id);
 
@@ -106,10 +114,8 @@ pub fn calculate_member_stress(truss: &mut Truss) -> ResultMatrix {
             println!("placing {row_y_end}, {col}");
             matrix[(row_x_start, col)] = dx / length;
             matrix[(row_y_start, col)] = dy / length;
-
             // End node (negative)
             matrix[(row_x_end, col)] = -dx / length;
-
             matrix[(row_y_end, col)] = -dy / length;
         }
         for force in &truss.connections {
