@@ -277,7 +277,7 @@ fn update_line_preview(
 //         match *cam {
 //             Projection::Orthographic(ref mut ortho) => ortho.scale -= 1.,
 //             _ => panic!("help i cant find the right cam"),
-//         }
+
 //     }
 //     if keys.just_pressed(KeyCode::KeyK) {
 //         match *cam {
