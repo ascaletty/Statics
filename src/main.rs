@@ -6,6 +6,7 @@ use bevy::prelude::*;
 use bevy_cursor::prelude::*;
 use std::collections::HashMap;
 const SNAP_TOLERANCE: f32 = 10.;
+mod command;
 mod physics;
 use truss::structs::Node;
 use truss::structs::*;
@@ -30,6 +31,7 @@ fn main() {
         .add_systems(Update, preview_on)
         .run();
 }
+
 fn preview_on(
     mode: Res<Mode>,
     commands: Commands,
@@ -42,8 +44,16 @@ fn preview_on(
     let insert = matches!(*mode, Mode::Insert);
     let previewspawned = ids.membermap.contains_key(&0);
     let last_exist = last.position.is_some();
+
     if !previewspawned && last_exist {
-        spawn_line_preview(commands, &mut meshes, &mut ids, materials);
+        if last
+            .position
+            .unwrap()
+            .distance(cursor.position().unwrap_or(Vec2::ZERO))
+            > 0.
+        {
+            spawn_line_preview(commands, &mut meshes, &mut ids, materials);
+        }
     }
     if insert && previewspawned && last_exist {
         update_line_preview(cursor, ids, last, meshes);
@@ -79,39 +89,53 @@ fn keyboard_input(
             let cursorloc = cursor.world_position().unwrap_or(Vec2::ZERO);
             if keys.just_pressed(KeyCode::Space) {
                 if let Some(old_node) = truss
-                    .clone()
                     .nodes
+                    .clone()
                     .iter()
-                    .find(|x| x.0.distance(cursorloc) < SNAP_TOLERANCE)
+                    .find(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
                 {
+                    let nodecount = truss.nodes.len();
+                    let last_node = Node {
+                        pos: last.position.unwrap_or(old_node.pos),
+                        id: nodecount,
+                    };
+
                     let memcount = truss.edges.len();
                     let member = Member {
-                        start: last.position.unwrap_or(old_node.0),
-                        end: old_node.0,
+                        start: last_node,
+                        end: old_node.clone(),
                         id: memcount + 1,
                     };
 
                     commands.queue(member.clone());
                     truss.edges.push(member);
 
-                    last.position = Some(old_node.0);
+                    last.position = Some(old_node.pos);
                 } else {
                     let nodecount = truss.nodes.len();
 
                     let memcount = truss.edges.len();
-                    let node = Node(cursorloc, nodecount + 1);
+                    let mut node = Node {
+                        pos: cursorloc,
+                        id: nodecount,
+                    };
                     commands.queue(node.clone());
                     truss.nodes.push(node.clone());
+
                     if last.position.is_some() {
+                        let last_node = Node {
+                            pos: last.position.unwrap(),
+                            id: nodecount - 1,
+                        };
                         let member = Member {
-                            start: last.position.unwrap(),
-                            end: cursorloc,
+                            start: last_node,
+                            end: node.clone(),
                             id: memcount + 1,
                         };
                         commands.queue(member.clone());
                         truss.edges.push(member);
                     }
-                    last.position = Some(node.0);
+                    last.position = Some(node.pos);
                 }
             }
             if keys.just_pressed(KeyCode::Escape) {
@@ -125,33 +149,37 @@ fn keyboard_input(
             }
             if keys.just_pressed(KeyCode::KeyR) {
                 let connection_count = truss.connections.len();
+                let mut roll = Connection::Roller(Vec2::ZERO, 20);
                 if let Some(old_node) = truss
                     .nodes
                     .iter()
-                    .find(|x| x.0.distance(cursorloc) < SNAP_TOLERANCE)
+                    .find(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
                 {
-                    commands.queue(Connection::Roller(old_node.0, connection_count));
+                    roll = Connection::Roller(old_node.pos, connection_count);
+                    commands.queue(roll.clone());
                 } else {
+                    roll = Connection::Roller(cursorloc, connection_count);
+
                     commands.queue(Connection::Roller(cursorloc, connection_count));
                 }
-                truss
-                    .connections
-                    .push(Connection::Roller(cursorloc, connection_count));
+                truss.connections.push(roll);
             }
             if keys.just_pressed(KeyCode::KeyP) {
                 let connection_count = truss.connections.len();
+
+                let mut pin = Connection::Pin(Vec2::ZERO, 20);
                 if let Some(old_node) = truss
                     .nodes
                     .iter()
-                    .find(|x| x.0.distance(cursorloc) < SNAP_TOLERANCE)
+                    .find(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
                 {
-                    commands.queue(Connection::Pin(old_node.0, connection_count));
+                    pin = Connection::Pin(old_node.pos, connection_count);
+                    commands.queue(pin.clone());
                 } else {
-                    commands.queue(Connection::Pin(cursorloc, connection_count));
+                    pin = Connection::Pin(cursorloc, connection_count);
+                    commands.queue(pin.clone());
                 }
-                truss
-                    .connections
-                    .push(Connection::Pin(cursorloc, connection_count));
+                truss.connections.push(pin);
             }
             if keys.just_pressed(KeyCode::KeyF) {
                 let connection_count = truss.connections.len();
@@ -171,7 +199,7 @@ fn keyboard_input(
                 if let Some(old_node) = truss
                     .nodes
                     .iter()
-                    .find(|x| x.0.distance(cursorloc) < SNAP_TOLERANCE)
+                    .find(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
                 {
                     commands.queue(Connection::Force(force.clone()));
                 } else {
@@ -219,12 +247,12 @@ fn update_line_preview(
     let mut cursor_loc = cursor.world_position().unwrap_or(Vec2::ZERO);
 
     let length = last_point.distance(cursor_loc);
-    if cursor_loc.x == 0. {
-        cursor_loc.x = 1.0;
-    }
-    if cursor_loc.y == 0. {
-        cursor_loc.y = 1.0;
-    }
+    // if cursor_loc.x == 0. {
+    //     cursor_loc.x = 1.0;
+    // }
+    // if cursor_loc.y == 0. {
+    //     cursor_loc.y = 1.0;
+    // }
     let diff = last_point - cursor_loc;
     let mut theta = diff.x / diff.y;
     theta = theta.atan();
@@ -289,26 +317,25 @@ mod tests {
         let two = Vec2::new(1., 0.);
         let three = Vec2::new(0., 1.);
         let force_end = Vec2::new(-1., 0.);
-        let n1 = Node(one, 1);
-
-        let n2 = Node(two, 2);
-
-        let n3 = Node(three, 3);
+        let n0 = Node { pos: one, id: 0 };
+        let n1 = Node { pos: two, id: 1 };
+        let n2 = Node { pos: three, id: 2 };
+        let m0 = Member {
+            start: n0.clone(),
+            end: n1.clone(),
+            id: 0,
+        };
         let m1 = Member {
-            start: one,
-            end: two,
+            start: n1.clone(),
+            end: n2.clone(),
             id: 1,
         };
         let m2 = Member {
-            start: two,
-            end: three,
+            start: n2.clone(),
+            end: n0.clone(),
             id: 2,
         };
-        let m3 = Member {
-            start: three,
-            end: one,
-            id: 3,
-        };
+
         let p1 = Connection::Pin(one, 1);
         let r1 = Connection::Roller(two, 2);
         let f1 = Connection::Force(Force {
@@ -319,10 +346,10 @@ mod tests {
         });
         truss
             .nodes
-            .append(&mut vec![n1.clone(), n2.clone(), n3.clone()]);
+            .append(&mut vec![n0.clone(), n1.clone(), n2.clone()]);
         truss
             .edges
-            .append(&mut vec![m1.clone(), m2.clone(), m3.clone()]);
+            .append(&mut vec![m0.clone(), m1.clone(), m2.clone()]);
         truss
             .connections
             .append(&mut vec![p1.clone(), r1.clone(), f1.clone()]);
@@ -332,7 +359,7 @@ mod tests {
     fn basic_triangle() -> ResultMatrix {
         let output = test_triangle();
         println!("output {:?}", output);
-        let awnsers = MatrixXx1::from_vec(vec![0., 0., 2., 0., 1.41, 0.]);
+        let awnsers = MatrixXx1::from_vec(vec![0., 0., -2., 0., 2., 0.]);
         let angle: f32 = PI / 4.;
         let cos = angle.cos();
         let sin = angle.sin();
@@ -340,7 +367,7 @@ mod tests {
             1., 0., 0., 1., 0., 0., 0., 0., 1., 0., 1., 0., 1., -cos, 0., 0., 0., 0., 0., sin, 0.,
             0., 0., -1., 0., 1., 0., 0., 0., 0., 0., -sin, 1., 0., 0., 0.,
         ];
-        let forcing = vec![2., 0., 0., 0., 0., 0.];
+        let forcing = vec![0., 0., 0., 0., 0., 2.];
         let forcing_matrix = MatrixXx1::from_vec(forcing);
 
         let matrix = DMatrix::from_vec(6, 6, values);
@@ -367,20 +394,20 @@ mod tests {
     //     assert_eq!(output.forcing, true_output.forcing);
     // }
     //
-    #[test]
-    fn val_matrix_match() {
-        let true_output = basic_triangle();
-
-        let output = test_triangle();
-        assert_eq!(output.matrix, true_output.matrix);
-    }
-    //
     // #[test]
-    // fn awnsers_match() {
+    // fn val_matrix_match() {
     //     let true_output = basic_triangle();
     //
     //     let output = test_triangle();
-    //
-    //     assert_eq!(output.result, true_output.result);
+    //     assert_eq!(output.matrix, true_output.matrix);
     // }
+    //
+    #[test]
+    fn awnsers_match() {
+        let true_output = basic_triangle();
+
+        let output = test_triangle();
+
+        assert_eq!(output.result, true_output.result);
+    }
 }
