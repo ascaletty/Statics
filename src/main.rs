@@ -92,12 +92,14 @@ fn keyboard_input(
                     .nodes
                     .clone()
                     .iter()
-                    .find(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
+                    .filter(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
+                    .min_by_key(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
                 {
+                    println!("old_node id{}", old_node.id);
                     let nodecount = truss.nodes.len();
                     let last_node = Node {
                         pos: last.position.unwrap_or(old_node.pos),
-                        id: nodecount,
+                        id: nodecount - 1,
                     };
 
                     let memcount = truss.edges.len();
@@ -302,6 +304,14 @@ mod tests {
     use nalgebra::Matrix6x1;
     use nalgebra::MatrixXx1;
     use truss::structs::ResultMatrix;
+
+    fn matrices_close(a: &MatrixXx1<f32>, b: &MatrixXx1<f32>, tol: f32) -> bool {
+        if a.shape() != b.shape() {
+            return false;
+        }
+
+        a.iter().zip(b.iter()).all(|(x, y)| (x - y).abs() <= tol)
+    }
     fn test_triangle() -> ResultMatrix {
         let mut truss = Truss {
             edges: vec![],
@@ -316,7 +326,7 @@ mod tests {
         let one = Vec2::new(0., 0.);
         let two = Vec2::new(1., 0.);
         let three = Vec2::new(0., 1.);
-        let force_end = Vec2::new(-1., 0.);
+        let force_end = Vec2::new(0., -1.);
         let n0 = Node { pos: one, id: 0 };
         let n1 = Node { pos: two, id: 1 };
         let n2 = Node { pos: three, id: 2 };
@@ -356,10 +366,92 @@ mod tests {
         physics::calculate_member_stress(&mut truss)
     }
 
+    fn test_complex_triangle() -> ResultMatrix {
+        let mut truss = Truss {
+            edges: vec![],
+            nodes: vec![],
+            nodemap: HashMap::new(),
+            connections: vec![],
+            connectionmap: HashMap::new(),
+            selected_node: None,
+            dragging: None,
+            membermap: HashMap::new(),
+        };
+        let one = Vec2::new(0., 0.);
+        let two = Vec2::new(-2., 3.);
+        let three = Vec2::new(5., 0.);
+        let force_end = Vec2::new(-400., -400.);
+        let n0 = Node { pos: one, id: 0 };
+        let n1 = Node { pos: two, id: 1 };
+        let n2 = Node { pos: three, id: 2 };
+        let m0 = Member {
+            start: n0.clone(),
+            end: n1.clone(),
+            id: 0,
+        };
+        let m1 = Member {
+            start: n1.clone(),
+            end: n2.clone(),
+            id: 1,
+        };
+        let m2 = Member {
+            start: n2.clone(),
+            end: n0.clone(),
+            id: 2,
+        };
+
+        let p1 = Connection::Pin(one, 1);
+        let r1 = Connection::Roller(three, 2);
+        let f1 = Connection::Force(Force {
+            start: two,
+            end: force_end,
+            id: 3,
+            magnitude: 400.,
+        });
+        truss
+            .nodes
+            .append(&mut vec![n0.clone(), n1.clone(), n2.clone()]);
+        truss
+            .edges
+            .append(&mut vec![m0.clone(), m1.clone(), m2.clone()]);
+        truss
+            .connections
+            .append(&mut vec![p1.clone(), r1.clone(), f1.clone()]);
+        physics::calculate_member_stress(&mut truss)
+    }
+
+    fn complex_triangle() -> ResultMatrix {
+        let awnsers = MatrixXx1::from_vec(vec![506.7, 0., 0., 281., -421.6, 706.]);
+        let angle: f32 = PI / 4.;
+        let cos = angle.cos();
+        let sin = angle.sin();
+        let values = vec![
+            0.0, -0.55, 1., 1., 1., 0., 0., 0., 1., 0., 1., 0., 1., -cos, 0., 0., 0., 0., 0., sin,
+            0., 0., 0., -1., 0., 1., 0., 0., 0., 0., 0., -sin, 1., 0., 0., 0.,
+        ];
+        let forcing = vec![0., 0., 0., 0., 0., 2.];
+        let forcing_matrix = MatrixXx1::from_vec(forcing);
+
+        let matrix = DMatrix::from_vec(6, 6, values);
+        let inverse = matrix
+            .clone()
+            .pseudo_inverse(0.0000001)
+            .expect("failed to find inverse");
+        let mut final_res = MatrixXx1::zeros(6);
+        inverse.mul_to(&forcing_matrix, &mut final_res);
+        println!("inverse {:?}", inverse);
+        println!("final_res {:?}", final_res);
+        ResultMatrix {
+            result: awnsers,
+            matrix,
+            forcing: forcing_matrix,
+        }
+    }
+
     fn basic_triangle() -> ResultMatrix {
         let output = test_triangle();
         println!("output {:?}", output);
-        let awnsers = MatrixXx1::from_vec(vec![0., 0., -2., 0., 2., 0.]);
+        let awnsers = MatrixXx1::from_vec(vec![0., 0., 0., 0., 2., 0.]);
         let angle: f32 = PI / 4.;
         let cos = angle.cos();
         let sin = angle.sin();
@@ -408,6 +500,23 @@ mod tests {
 
         let output = test_triangle();
 
-        assert_eq!(output.result, true_output.result);
+        assert!(
+            matrices_close(&output.result, &true_output.result, 0.25),
+            "Matrix differed by more than .25 \n expected= {} \nactual{}",
+            output.result,
+            true_output.result
+        );
+    }
+    #[test]
+    fn awnsers_match_complex() {
+        let true_output = complex_triangle();
+        let output = test_complex_triangle();
+
+        assert!(
+            matrices_close(&output.result, &true_output.result, 0.25),
+            "Matrix differed by more than .25 \n expected= {} \nactual{}",
+            output.result,
+            true_output.result
+        );
     }
 }

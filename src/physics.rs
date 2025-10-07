@@ -40,11 +40,7 @@ pub fn calculate_member_stress(truss: &mut Truss) -> ResultMatrix {
                     .nodes
                     .iter()
                     .find(|x| x.pos == *pos)
-<<<<<<< HEAD
-                    .expect("need pins to be at nodes");
-=======
                     .expect("need connections to be at nodes");
->>>>>>> refs/remotes/origin/master
                 println!("node id found{} for pin", matching_node.id);
                 matrix[(matching_node.id, halfsize)] = 1.;
 
@@ -60,19 +56,16 @@ pub fn calculate_member_stress(truss: &mut Truss) -> ResultMatrix {
                     .nodes
                     .iter()
                     .find(|x| x.pos == *pos)
-<<<<<<< HEAD
                     .expect("need roller to be at nodes");
-=======
-                    .expect("need connections to be at nodes");
->>>>>>> refs/remotes/origin/master
 
                 println!("node id found{} for roller", matching_node.id);
 
                 //only doing the y reactions rn
                 //will need to add support for rollers with x reactions
-                matrix[(matching_node.id + 2, halfsize)] = 1.;
+                //
+                matrix[(matching_node.id + 1, halfsize)] = 1.;
 
-                println!("put rollecr at {},{}", matching_node.id, halfsize);
+                println!("put rollecr at {},{}", matching_node.id + 1, halfsize);
                 1
             }
             Connection::Force(_force) => 0,
@@ -97,7 +90,7 @@ pub fn calculate_member_stress(truss: &mut Truss) -> ResultMatrix {
             println!("start.id {}", start.id);
             println!("end.id{}", end.id);
 
-            let col = member.id - 1; // member force column
+            let col = member.id; // member force column
 
             let row_x_start = 2 * start.id;
             let row_y_start = 2 * start.id + 1;
@@ -119,20 +112,26 @@ pub fn calculate_member_stress(truss: &mut Truss) -> ResultMatrix {
             matrix[(row_y_end, col)] = -dy / length;
         }
         for force in &truss.connections {
-            match force {
-                Connection::Force(force) => {
-                    let nodes_with_force = truss.nodes.iter().filter(|x| x.pos == force.start);
-                    for node in nodes_with_force {
-                        print!("node with force {:?}", node);
-                        //this should place the force on only y rows
-                        //place it at the end node of the
-                        let member = truss.edges.iter().find(|x| x.end.pos == node.pos).unwrap();
-                        println!("member end id{}", member.end.id);
-                        zeros[(member.start.id * 2 + 1, 0)] = force.magnitude;
-                    }
-                }
+            if let Connection::Force(field) = force {
+                let nodes_with_force = truss.nodes.iter().filter(|x| x.pos == field.start);
+                for node in nodes_with_force {
+                    print!("node with force {:?}", node);
+                    //this should place the force on only y rows
+                    //place it at the end node of the
+                    //
+                    let start = field.start;
+                    let end = field.end;
+                    let diff = start - end;
+                    let angle = diff.angle_to(Vec2::new(1.0, 0.));
+                    println!("angle {}", angle);
+                    println!("angle_x, {}", angle.cos());
 
-                _ => {}
+                    println!("angle_y, {}", angle.sin());
+                    let member = truss.edges.iter().find(|x| x.end.pos == node.pos).unwrap();
+
+                    zeros[(node.id * 2 + 1, 0)] = -field.magnitude * angle.sin();
+                    zeros[(node.id * 2, 0)] = field.magnitude * angle.cos();
+                }
             }
         }
         let tol = 1e-2;
