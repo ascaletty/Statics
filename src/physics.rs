@@ -1,23 +1,28 @@
-use std::f32::consts::PI;
+use std::{f32::consts::PI, num::NonZeroUsize};
+
+use faer::linalg::solvers::{PartialPivLu, SolveCore};
 
 use bevy::{
     math::{Vec2, ops::atan},
     platform::collections::HashSet,
     tasks::futures_lite::stream::iter,
 };
-use nalgebra::{
-    Const, DMatrix, DimAdd, Matrix1xX, Matrix2xX, MatrixXx1, MatrixXx2, VecStorage, Vector, VectorN,
+use faer::linalg::solvers::Qr;
+use faer::{
+    dyn_stack::{MemStack, mem},
+    linalg::{cholesky::llt::solve::solve_in_place, solvers},
+    mat::Mat,
+    prelude::*,
 };
+use rayon::ThreadPoolBuilder;
 use truss::structs::*;
 
-pub fn calculate_member_stress(truss: &mut Truss) -> ResultMatrix {
-    let size = 2 * truss.edges.len();
+pub fn calculate_member_stress(truss: &mut Truss) -> Mat<f32> {
+    let size = 2 * truss.nodes.len();
     let mut reactions = 0;
-    let mut matrix = DMatrix::zeros(size, size);
+    let mut matrix = Mat::<f32>::zeros(size, size);
 
-    let mut finals = nalgebra::MatrixXx1::from_element(size, 0.);
-
-    let mut zeros = nalgebra::MatrixXx1::zeros(size);
+    let mut zeros = Mat::<f32>::zeros(size, 1);
     print!("matrix, {:?}", matrix);
     for node in &truss.nodes {
         println!("Node: {:?}", node);
@@ -42,12 +47,12 @@ pub fn calculate_member_stress(truss: &mut Truss) -> ResultMatrix {
                     .find(|x| x.pos == *pos)
                     .expect("need connections to be at nodes");
                 println!("node id found{} for pin", matching_node.id);
-                matrix[(matching_node.id, halfsize)] = 1.;
+                matrix[(matching_node.id * 2, halfsize)] = 1.;
 
                 println!("put pin at {},{}", matching_node.id, halfsize);
-                matrix[(matching_node.id + 1, halfsize + 1)] = 1.;
+                matrix[(matching_node.id * 2 + 1, halfsize + 1)] = 1.;
 
-                println!("put pin at {},{}", matching_node.pos, halfsize + 1);
+                println!("put pin at {},{}", matching_node.id, halfsize + 1);
                 2
             }
             Connection::Roller(pos, _id) => {
@@ -55,7 +60,8 @@ pub fn calculate_member_stress(truss: &mut Truss) -> ResultMatrix {
                 let matching_node = truss
                     .nodes
                     .iter()
-                    .find(|x| x.pos == *pos)
+                    .filter(|x| x.pos == *pos)
+                    .min_by_key(|x| x.pos.distance(*pos) < 0.0001)
                     .expect("need roller to be at nodes");
 
                 println!("node id found{} for roller", matching_node.id);
@@ -63,7 +69,7 @@ pub fn calculate_member_stress(truss: &mut Truss) -> ResultMatrix {
                 //only doing the y reactions rn
                 //will need to add support for rollers with x reactions
                 //
-                matrix[(matching_node.id + 1, halfsize)] = 1.;
+                matrix[(matching_node.id * 2 + 1, halfsize)] = 1.;
 
                 println!("put rollecr at {},{}", matching_node.id + 1, halfsize);
                 1
@@ -73,11 +79,11 @@ pub fn calculate_member_stress(truss: &mut Truss) -> ResultMatrix {
         println!("halfsize count {halfsize}");
     }
 
-    println!("Matrix after this connection:\n{}", matrix);
     print!("num of members {}", truss.edges.len());
+    print!("number of node{}", truss.nodes.len());
     print!("num of reactions {}", reactions);
-    let sanity_check = truss.edges.len() + reactions;
-    if sanity_check >= size {
+    println!("matrix after placing reactions: {:?}", matrix);
+    if size == truss.edges.len() + reactions {
         println!("Solvable!");
 
         for member in truss.edges.clone() {
@@ -98,13 +104,13 @@ pub fn calculate_member_stress(truss: &mut Truss) -> ResultMatrix {
             let row_y_end = 2 * end.id + 1;
 
             // Start node
-            println!("placing {row_x_start}, {col}");
-
-            println!("placing {row_y_start}, {col}");
-
-            println!("placing {row_x_end}, {col}");
-
-            println!("placing {row_y_end}, {col}");
+            // println!("placing {row_x_start}, {col}");
+            //
+            // println!("placing {row_y_start}, {col}");
+            //
+            // println!("placing {row_x_end}, {col}");
+            //
+            // println!("placing {row_y_end}, {col}");
             matrix[(row_x_start, col)] = dx / length;
             matrix[(row_y_start, col)] = dy / length;
             // End node (negative)
@@ -134,26 +140,33 @@ pub fn calculate_member_stress(truss: &mut Truss) -> ResultMatrix {
                 }
             }
         }
-        let tol = 1e-2;
-        let inverse = matrix.clone().pseudo_inverse(tol).unwrap();
-        print!("zeros: {}", zeros);
-        // 6x6 * 6x1= 6x1
-        inverse.mul_to(&zeros, &mut finals);
-        println!("matrix {}", matrix);
-        println!("final {:?}", finals);
-        for val in finals.as_mut_slice() {
-            if (*val).abs() < 0.00001 {
-                *val = 0.;
-            } else {
-                *val = (*val * 1000.0).round() / (1000.0)
-            }
-        }
+        println!("forcing{:?}", zeros);
+        println!("matrix after placing coefficeints: {:?}", matrix);
+        let decomp = PartialPivLu::new(matrix.as_ref());
+
+        // let u = decomp.U();
+        //
+        // let tol = 1e-9;
+        // let mut singular = false;
+        //
+        // for i in 0..u.nrows().min(u.ncols()) {
+        //     if u[(i, i)].abs() < tol {
+        //         singular = true;
+        //         break;
+        //     }
+        // // }
+        // if singular {
+        //     panic!("matrix is singular and cannot be solved")
+        // } else {
+        // println!("matrix is not singular and is  invertable");
+        decomp.solve_in_place_with_conj(faer::Conj::No, zeros.as_mut());
+        println!("matrix {:?}", decomp);
+        println!("sol? :{:?}", zeros);
+        // }
+    } else if truss.edges.len() + reactions > size {
+        println!("overdefined")
     } else {
         println!("need more reactions")
     }
-    ResultMatrix {
-        matrix: matrix,
-        result: finals,
-        forcing: zeros,
-    }
+    zeros
 }

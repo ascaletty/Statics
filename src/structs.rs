@@ -203,10 +203,3 @@ pub struct LastNode {
 
 #[derive(Resource)]
 pub struct NodeCount(pub u32);
-use nalgebra::{DMatrix, MatrixXx1};
-#[derive(Debug)]
-pub struct ResultMatrix {
-    pub result: MatrixXx1<f32>,
-    pub matrix: DMatrix<f32>,
-    pub forcing: MatrixXx1<f32>,
-}

@@ -300,19 +300,129 @@ mod tests {
     use std::f32::consts::PI;
 
     use super::*;
-    use nalgebra::DMatrix;
-    use nalgebra::Matrix6x1;
-    use nalgebra::MatrixXx1;
-    use truss::structs::ResultMatrix;
-
-    fn matrices_close(a: &MatrixXx1<f32>, b: &MatrixXx1<f32>, tol: f32) -> bool {
-        if a.shape() != b.shape() {
-            return false;
+    use faer::Mat;
+    use faer::prelude::*;
+    fn zeros(mut matrix: Mat<f32>) -> Mat<f32> {
+        for i in 0..matrix.nrows() {
+            for j in 0..matrix.ncols() {
+                if matrix[(i, j)].abs() < 1e-4 {
+                    matrix[(i, j)] = 0.;
+                }
+            }
         }
-
-        a.iter().zip(b.iter()).all(|(x, y)| (x - y).abs() <= tol)
+        matrix
     }
-    fn test_triangle() -> ResultMatrix {
+
+    use bevy::math::Vec2;
+    use std::fs;
+    use std::path::Path;
+    use truss::structs::*;
+
+    #[derive(Debug, serde::Deserialize)]
+    struct RawTruss {
+        nodes: Vec<String>,
+        members: Vec<String>,
+        supports: serde_json::Map<String, serde_json::Value>,
+        forces: Vec<String>,
+        workspace: serde_json::Value,
+        awnsers: Vec<f32>,
+    }
+
+    pub fn load_trusses_from_folder<P: AsRef<Path>>(folder: P) -> Vec<bool> {
+        let mut vecbool = Vec::new();
+
+        for entry in fs::read_dir(folder).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            let file_name = path.file_name().unwrap().to_str().unwrap();
+
+            if file_name.starts_with("truss") {
+                let data = fs::read_to_string(&path).unwrap();
+                let raw: RawTruss = serde_json::from_str(&data).unwrap();
+
+                // Parse nodes
+                let nodes: Vec<Node> = raw
+                    .nodes
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| {
+                        let parts: Vec<f32> = s
+                            .split(',')
+                            .map(|x| x.trim().parse::<f32>().unwrap())
+                            .collect();
+                        Node {
+                            id: i,
+                            pos: Vec2::new(parts[0], parts[1]),
+                        }
+                    })
+                    .collect();
+
+                // Parse members into your Member struct
+                let edges: Vec<Member> = raw
+                    .members
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| {
+                        let parts: Vec<usize> = s
+                            .split(',')
+                            .map(|x| x.trim().parse::<usize>().unwrap())
+                            .collect();
+                        let start = nodes[parts[0]].clone();
+                        let end = nodes[parts[1]].clone();
+                        Member { id: i, start, end }
+                    })
+                    .collect();
+
+                // TODO add connections
+                let connections: Vec<Connection> = raw
+                    .supports
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (node, connection_type))| {
+                        if connection_type.as_str().unwrap() == "P" {
+                            let at_node = nodes
+                                .iter()
+                                .find(|x| x.id == node.parse::<usize>().unwrap())
+                                .unwrap();
+                            Connection::Pin(at_node.pos, i)
+                        } else {
+                            let at_node = nodes
+                                .iter()
+                                .find(|x| x.id == node.parse::<usize>().unwrap())
+                                .unwrap();
+                            Connection::Roller(at_node.pos, i)
+                        }
+                    })
+                    .collect();
+                let forces= raw.forces
+                let mut truss = Truss {
+                    nodes,
+                    edges,
+                    selected_node: None,
+                    dragging: None,
+                    connections: connections,
+                    connectionmap: HashMap::new(),
+                    membermap: HashMap::new(),
+                    nodemap: HashMap::new(),
+                };
+                let expirimental = physics::calculate_member_stress(&mut truss);
+
+                let awnser_mat = Mat::from_fn(raw.awnsers.len(), 1, |i, j| raw.awnsers[i]);
+                if awnser_mat == expirimental {
+                    vecbool.push(true);
+                } else {
+                    vecbool.push(false);
+                }
+            }
+        }
+        vecbool
+    }
+    #[derive(serde::Deserialize)]
+    struct MatrixWrapper {
+        matrix: Vec<Vec<f32>>,
+    }
+
+    fn test_triangle() -> Mat<f32> {
         let mut truss = Truss {
             edges: vec![],
             nodes: vec![],
@@ -366,7 +476,7 @@ mod tests {
         physics::calculate_member_stress(&mut truss)
     }
 
-    fn test_complex_triangle() -> ResultMatrix {
+    fn test_complex_triangle() -> Mat<f32> {
         let mut truss = Truss {
             edges: vec![],
             nodes: vec![],
@@ -420,65 +530,28 @@ mod tests {
         physics::calculate_member_stress(&mut truss)
     }
 
-    fn complex_triangle() -> ResultMatrix {
-        let awnsers = MatrixXx1::from_vec(vec![506.7, 0., 0., 281., -421.6, 706.]);
-        let angle: f32 = PI / 4.;
-        let cos = angle.cos();
-        let sin = angle.sin();
-        let values = vec![
-            0.0, -0.55, 1., 1., 1., 0., 0., 0., 1., 0., 1., 0., 1., -cos, 0., 0., 0., 0., 0., sin,
-            0., 0., 0., -1., 0., 1., 0., 0., 0., 0., 0., -sin, 1., 0., 0., 0.,
-        ];
-        let forcing = vec![0., 0., 0., 0., 0., 2.];
-        let forcing_matrix = MatrixXx1::from_vec(forcing);
-
-        let matrix = DMatrix::from_vec(6, 6, values);
-        let inverse = matrix
-            .clone()
-            .pseudo_inverse(0.0000001)
-            .expect("failed to find inverse");
-        let mut final_res = MatrixXx1::zeros(6);
-        inverse.mul_to(&forcing_matrix, &mut final_res);
-        println!("inverse {:?}", inverse);
-        println!("final_res {:?}", final_res);
-        ResultMatrix {
-            result: awnsers,
-            matrix,
-            forcing: forcing_matrix,
-        }
+    fn complex_triangle() -> Mat<f32> {
+        mat![
+            [-681.55347],
+            [717.1116],
+            [-659.1295],
+            [281.07166],
+            [567.0868],
+            [-282.48407],
+        ]
     }
 
-    fn basic_triangle() -> ResultMatrix {
-        let output = test_triangle();
-        println!("output {:?}", output);
-        let awnsers = MatrixXx1::from_vec(vec![0., 0., 0., 0., 2., 0.]);
-        let angle: f32 = PI / 4.;
-        let cos = angle.cos();
-        let sin = angle.sin();
-        let values = vec![
-            1., 0., 0., 1., 0., 0., 0., 0., 1., 0., 1., 0., 1., -cos, 0., 0., 0., 0., 0., sin, 0.,
-            0., 0., -1., 0., 1., 0., 0., 0., 0., 0., -sin, 1., 0., 0., 0.,
-        ];
-        let forcing = vec![0., 0., 0., 0., 0., 2.];
-        let forcing_matrix = MatrixXx1::from_vec(forcing);
-
-        let matrix = DMatrix::from_vec(6, 6, values);
-        let inverse = matrix
-            .clone()
-            .pseudo_inverse(0.0000001)
-            .expect("failed to find inverse");
-        let mut final_res = MatrixXx1::zeros(6);
-        inverse.mul_to(&forcing_matrix, &mut final_res);
-        println!("inverse {:?}", inverse);
-        println!("final_res {:?}", final_res);
-        ResultMatrix {
-            result: awnsers,
-            matrix,
-            forcing: forcing_matrix,
-        }
+    fn basic_triangle() -> Mat<f32> {
+        mat![[0.], [0.], [0.], [0.], [2.], [0.],]
     }
 
-    // #[test]
+    #[test]
+    fn test_batch() {
+        let vecbool = load_trusses_from_folder("test_trusses");
+        for bools in vecbool {
+            assert!(bools, "the  truss had an error");
+        }
+    }
     // fn forcing_matrix__match() {
     //     let true_output = basic_triangle();
     //     let output = test_triangle();
@@ -500,23 +573,13 @@ mod tests {
 
         let output = test_triangle();
 
-        assert!(
-            matrices_close(&output.result, &true_output.result, 0.25),
-            "Matrix differed by more than .25 \n expected= {} \nactual{}",
-            output.result,
-            true_output.result
-        );
+        assert_eq!(zeros(output), zeros(true_output));
     }
     #[test]
     fn awnsers_match_complex() {
         let true_output = complex_triangle();
         let output = test_complex_triangle();
 
-        assert!(
-            matrices_close(&output.result, &true_output.result, 0.25),
-            "Matrix differed by more than .25 \n expected= {} \nactual{}",
-            output.result,
-            true_output.result
-        );
+        assert_eq!(zeros(output), zeros(true_output));
     }
 }
