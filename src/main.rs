@@ -6,7 +6,6 @@ use bevy::prelude::*;
 use bevy_cursor::prelude::*;
 use std::collections::HashMap;
 const SNAP_TOLERANCE: f32 = 10.;
-mod command;
 mod physics;
 use truss::structs::Node;
 use truss::structs::*;
@@ -340,7 +339,7 @@ mod tests {
                 let data = fs::read_to_string(&path).unwrap();
                 let raw: RawTruss = serde_json::from_str(&data).unwrap();
 
-                // Parse nodes
+                // Parse nodes/
                 let nodes: Vec<Node> = raw
                     .nodes
                     .iter()
@@ -394,7 +393,7 @@ mod tests {
                         }
                     })
                     .collect();
-                let forces= raw.forces
+                let forces = raw.forces;
                 let mut truss = Truss {
                     nodes,
                     edges,
