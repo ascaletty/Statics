@@ -2,6 +2,7 @@ use std::{f32::consts::PI, num::NonZeroUsize};
 
 use faer::linalg::solvers::{PartialPivLu, SolveCore};
 
+use crate::structs_dir::structs::*;
 use bevy::{
     math::{Vec2, ops::atan},
     platform::collections::HashSet,
@@ -15,7 +16,6 @@ use faer::{
     prelude::*,
 };
 use rayon::ThreadPoolBuilder;
-use truss::structs::*;
 
 pub fn calculate_member_stress(truss: &mut Truss) -> Mat<f32> {
     let size = 2 * truss.nodes.len();

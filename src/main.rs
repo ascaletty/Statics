@@ -1,14 +1,15 @@
-use bevy::render::mesh::{Mesh, RectangleMeshBuilder};
-use std::io;
-
 use bevy::color::palettes::css::GRAY;
+use bevy::prelude::Node as Bevy_Node;
 use bevy::prelude::*;
+use bevy::render::mesh::{Mesh, RectangleMeshBuilder};
 use bevy_cursor::prelude::*;
 use std::collections::HashMap;
+use std::io;
 const SNAP_TOLERANCE: f32 = 10.;
-mod physics;
-use truss::structs::Node;
-use truss::structs::*;
+use truss::keyboard_input::keyboard_input;
+use truss::physics_dir::physics;
+use truss::structs_dir::structs::Node;
+use truss::structs_dir::structs::*;
 fn main() {
     App::new()
         .insert_resource(ClearColor(Color::Srgba(GRAY)))
@@ -17,6 +18,7 @@ fn main() {
             nodes: vec![],
             edges: vec![],
             selected_node: None,
+            preview: None,
             dragging: None,
             connections: vec![],
             membermap: HashMap::new(),
@@ -26,7 +28,18 @@ fn main() {
         .insert_resource(LastNode { position: None })
         .add_plugins((DefaultPlugins, TrackCursorPlugin))
         .add_systems(Startup, setup_camera)
-        .add_systems(Update, keyboard_input)
+        .add_systems(
+            Update,
+            keyboard_input::handle_command.run_if(resource_equals(Mode::Command)),
+        )
+        .add_systems(
+            Update,
+            keyboard_input::handle_text_input.run_if(resource_equals(Mode::InsertText)),
+        )
+        .add_systems(
+            Update,
+            keyboard_input::handle_insert.run_if(resource_equals(Mode::Insert)),
+        )
         .add_systems(Update, preview_on)
         .run();
 }
@@ -40,7 +53,7 @@ fn preview_on(
     cursor: ResMut<CursorLocation>,
     last: Res<LastNode>,
 ) {
-    let insert = matches!(*mode, Mode::Insert);
+    let insert = matches!(*mode, Mode::Insert | Mode::InsertText);
     let previewspawned = ids.membermap.contains_key(&0);
     let last_exist = last.position.is_some();
 
@@ -62,164 +75,164 @@ fn setup_camera(mut commands: Commands) {
     commands.spawn(Camera2d);
 }
 
-fn keyboard_input(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut commands: Commands,
-    mut mode: ResMut<Mode>,
-    mut last: ResMut<LastNode>,
-    cursor: Res<CursorLocation>,
-    mut truss: ResMut<Truss>,
-    mut meshes: ResMut<Assets<Mesh>>,
-) {
-    match *mode {
-        Mode::Command => {
-            if keys.just_pressed(KeyCode::KeyI) {
-                *mode = Mode::Insert;
-                last.position = None;
-            }
-            if keys.just_pressed(KeyCode::KeyD) {
-                *mode = Mode::Dimension;
-            }
-            if keys.just_pressed(KeyCode::KeyR) {
-                physics::calculate_member_stress(truss.into_inner());
-            }
-        }
-        Mode::Insert => {
-            let cursorloc = cursor.world_position().unwrap_or(Vec2::ZERO);
-            if keys.just_pressed(KeyCode::Space) {
-                if let Some(old_node) = truss
-                    .nodes
-                    .clone()
-                    .iter()
-                    .filter(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
-                    .min_by_key(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
-                {
-                    println!("old_node id{}", old_node.id);
-                    let nodecount = truss.nodes.len();
-                    let last_node = Node {
-                        pos: last.position.unwrap_or(old_node.pos),
-                        id: nodecount - 1,
-                    };
-
-                    let memcount = truss.edges.len();
-                    let member = Member {
-                        start: last_node,
-                        end: old_node.clone(),
-                        id: memcount + 1,
-                    };
-
-                    commands.queue(member.clone());
-                    truss.edges.push(member);
-
-                    last.position = Some(old_node.pos);
-                } else {
-                    let nodecount = truss.nodes.len();
-
-                    let memcount = truss.edges.len();
-                    let mut node = Node {
-                        pos: cursorloc,
-                        id: nodecount,
-                    };
-                    commands.queue(node.clone());
-                    truss.nodes.push(node.clone());
-
-                    if last.position.is_some() {
-                        let last_node = Node {
-                            pos: last.position.unwrap(),
-                            id: nodecount - 1,
-                        };
-                        let member = Member {
-                            start: last_node,
-                            end: node.clone(),
-                            id: memcount + 1,
-                        };
-                        commands.queue(member.clone());
-                        truss.edges.push(member);
-                    }
-                    last.position = Some(node.pos);
-                }
-            }
-            if keys.just_pressed(KeyCode::Escape) {
-                *mode = Mode::Command;
-                let memcount = truss.edges.len();
-                meshes.remove(truss.membermap.get(&0).unwrap().id());
-                truss.membermap.remove(&0);
-                if last.position.is_none() {
-                    truss.membermap.remove(&memcount);
-                }
-            }
-            if keys.just_pressed(KeyCode::KeyR) {
-                let connection_count = truss.connections.len();
-                let mut roll = Connection::Roller(Vec2::ZERO, 20);
-                if let Some(old_node) = truss
-                    .nodes
-                    .iter()
-                    .find(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
-                {
-                    roll = Connection::Roller(old_node.pos, connection_count);
-                    commands.queue(roll.clone());
-                } else {
-                    roll = Connection::Roller(cursorloc, connection_count);
-
-                    commands.queue(Connection::Roller(cursorloc, connection_count));
-                }
-                truss.connections.push(roll);
-            }
-            if keys.just_pressed(KeyCode::KeyP) {
-                let connection_count = truss.connections.len();
-
-                let mut pin = Connection::Pin(Vec2::ZERO, 20);
-                if let Some(old_node) = truss
-                    .nodes
-                    .iter()
-                    .find(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
-                {
-                    pin = Connection::Pin(old_node.pos, connection_count);
-                    commands.queue(pin.clone());
-                } else {
-                    pin = Connection::Pin(cursorloc, connection_count);
-                    commands.queue(pin.clone());
-                }
-                truss.connections.push(pin);
-            }
-            if keys.just_pressed(KeyCode::KeyF) {
-                let connection_count = truss.connections.len();
-                println!("enter magnitude");
-                let mut mag = String::new();
-                io::stdin()
-                    .read_line(&mut mag)
-                    .expect("failed to read message");
-
-                let force = Force {
-                    magnitude: mag.trim().parse().unwrap_or(0.),
-                    start: last.position.unwrap(),
-                    end: cursorloc,
-                    id: connection_count,
-                };
-
-                if let Some(old_node) = truss
-                    .nodes
-                    .iter()
-                    .find(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
-                {
-                    commands.queue(Connection::Force(force.clone()));
-                } else {
-                    commands.queue(Connection::Force(force.clone()));
-                }
-                truss.connections.push(Connection::Force(force));
-            }
-            // we can check multiple at once with `.any_*`
-            if keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
-                // Either the left or right shift are being held down
-            }
-            if keys.any_just_pressed([KeyCode::Delete, KeyCode::Backspace]) {
-                // Either delete or backspace was just pressed
-            }
-        }
-        Mode::Edit => {}
-        Mode::Dimension => {}
-    }
-}
+// fn keyboard_input(
+//     keys: Res<ButtonInput<KeyCode>>,
+//     mut commands: Commands,
+//     mut mode: ResMut<Mode>,
+//     mut last: ResMut<LastNode>,
+//     cursor: Res<CursorLocation>,
+//     mut truss: ResMut<Truss>,
+//     mut meshes: ResMut<Assets<Mesh>>,
+// ) {
+//     match *mode {
+//         Mode::Command => {
+//             if keys.just_pressed(KeyCode::KeyI) {
+//                 *mode = Mode::Insert;
+//                 last.position = None;
+//             }
+//             if keys.just_pressed(KeyCode::KeyD) {
+//                 *mode = Mode::Dimension;
+//             }
+//             if keys.just_pressed(KeyCode::KeyR) {
+//                 physics::calculate_member_stress(truss.into_inner());
+//             }
+//         }
+//         Mode::Insert => {
+//             let cursorloc = cursor.world_position().unwrap_or(Vec2::ZERO);
+//             if keys.just_pressed(KeyCode::Space) {
+//                 if let Some(old_node) = truss
+//                     .nodes
+//                     .clone()
+//                     .iter()
+//                     .filter(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
+//                     .min_by_key(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
+//                 {
+//                     println!("old_node id{}", old_node.id);
+//                     let nodecount = truss.nodes.len();
+//                     let last_node = Node {
+//                         pos: last.position.unwrap_or(old_node.pos),
+//                         id: nodecount - 1,
+//                     };
+//
+//                     let memcount = truss.edges.len();
+//                     let member = Member {
+//                         start: last_node,
+//                         end: old_node.clone(),
+//                         id: memcount + 1,
+//                     };
+//
+//                     commands.queue(member.clone());
+//                     truss.edges.push(member);
+//
+//                     last.position = Some(old_node.pos);
+//                 } else {
+//                     let nodecount = truss.nodes.len();
+//
+//                     let memcount = truss.edges.len();
+//                     let mut node = Node {
+//                         pos: cursorloc,
+//                         id: nodecount,
+//                     };
+//                     commands.queue(node.clone());
+//                     truss.nodes.push(node.clone());
+//
+//                     if last.position.is_some() {
+//                         let last_node = Node {
+//                             pos: last.position.unwrap(),
+//                             id: nodecount - 1,
+//                         };
+//                         let member = Member {
+//                             start: last_node,
+//                             end: node.clone(),
+//                             id: memcount + 1,
+//                         };
+//                         commands.queue(member.clone());
+//                         truss.edges.push(member);
+//                     }
+//                     last.position = Some(node.pos);
+//                 }
+//             }
+//             if keys.just_pressed(KeyCode::Escape) {
+//                 *mode = Mode::Command;
+//                 let memcount = truss.edges.len();
+//                 meshes.remove(truss.membermap.get(&0).unwrap().id());
+//                 truss.membermap.remove(&0);
+//                 if last.position.is_none() {
+//                     truss.membermap.remove(&memcount);
+//                 }
+//             }
+//             if keys.just_pressed(KeyCode::KeyR) {
+//                 let connection_count = truss.connections.len();
+//                 let mut roll = Connection::Roller(Vec2::ZERO, 20);
+//                 if let Some(old_node) = truss
+//                     .nodes
+//                     .iter()
+//                     .find(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
+//                 {
+//                     roll = Connection::Roller(old_node.pos, connection_count);
+//                     commands.queue(roll.clone());
+//                 } else {
+//                     roll = Connection::Roller(cursorloc, connection_count);
+//
+//                     commands.queue(Connection::Roller(cursorloc, connection_count));
+//                 }
+//                 truss.connections.push(roll);
+//             }
+//             if keys.just_pressed(KeyCode::KeyP) {
+//                 let connection_count = truss.connections.len();
+//
+//                 let mut pin = Connection::Pin(Vec2::ZERO, 20);
+//                 if let Some(old_node) = truss
+//                     .nodes
+//                     .iter()
+//                     .find(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
+//                 {
+//                     pin = Connection::Pin(old_node.pos, connection_count);
+//                     commands.queue(pin.clone());
+//                 } else {
+//                     pin = Connection::Pin(cursorloc, connection_count);
+//                     commands.queue(pin.clone());
+//                 }
+//                 truss.connections.push(pin);
+//             }
+//             if keys.just_pressed(KeyCode::KeyF) {
+//                 let connection_count = truss.connections.len();
+//                 println!("enter magnitude");
+//                 let mut mag = String::new();
+//                 io::stdin()
+//                     .read_line(&mut mag)
+//                     .expect("failed to read message");
+//
+//                 let force = Force {
+//                     magnitude: mag.trim().parse().unwrap_or(0.),
+//                     start: last.position.unwrap(),
+//                     end: cursorloc,
+//                     id: connection_count,
+//                 };
+//
+//                 if let Some(old_node) = truss
+//                     .nodes
+//                     .iter()
+//                     .find(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
+//                 {
+//                     commands.queue(Connection::Force(force.clone()));
+//                 } else {
+//                     commands.queue(Connection::Force(force.clone()));
+//                 }
+//                 truss.connections.push(Connection::Force(force));
+//             }
+//             // we can check multiple at once with `.any_*`
+//             if keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
+//                 // Either the left or right shift are being held down
+//             }
+//             if keys.any_just_pressed([KeyCode::Delete, KeyCode::Backspace]) {
+//                 // Either delete or backspace was just pressed
+//             }
+//         }
+//         Mode::Edit => {}
+//         Mode::Dimension => {}
+//     }
+// }
 
 fn spawn_line_preview(
     mut commands: Commands,
@@ -315,7 +328,7 @@ mod tests {
     use bevy::math::Vec2;
     use std::fs;
     use std::path::Path;
-    use truss::structs::*;
+    use truss::structs_dir::structs::*;
 
     #[derive(Debug, serde::Deserialize)]
     struct RawTruss {
@@ -399,6 +412,7 @@ mod tests {
                     edges,
                     selected_node: None,
                     dragging: None,
+                    preview: None,
                     connections: connections,
                     connectionmap: HashMap::new(),
                     membermap: HashMap::new(),
@@ -429,6 +443,7 @@ mod tests {
             connections: vec![],
             connectionmap: HashMap::new(),
             selected_node: None,
+            preview: None,
             dragging: None,
             membermap: HashMap::new(),
         };
@@ -481,6 +496,7 @@ mod tests {
             nodes: vec![],
             nodemap: HashMap::new(),
             connections: vec![],
+            preview: None,
             connectionmap: HashMap::new(),
             selected_node: None,
             dragging: None,

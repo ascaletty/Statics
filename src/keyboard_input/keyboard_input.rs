@@ -1,6 +1,5 @@
-use crate::dimension::dimension::update_truss;
-use crate::physics;
-use crate::structs::*;
+use crate::physics_dir::physics;
+use crate::structs_dir::structs::*;
 use bevy::ecs::event::EventReader;
 use bevy::input::ButtonState;
 use bevy::input::keyboard;
@@ -17,13 +16,13 @@ use bevy::prelude::Resource;
 use faer::traits::pulp::core_arch::x86;
 pub fn handle_text_input(
     mut evr_kbd: EventReader<KeyboardInput>,
-    mut input: ResMut<TextInput>,
     mut mode: ResMut<Mode>,
     last: Res<LastNode>,
     mut truss: ResMut<Truss>,
     cursor: Res<CursorLocation>,
     mut commands: Commands,
 ) {
+    let mut buf = String::new();
     let cursorloc = cursor.world_position().unwrap();
     let connection_count = truss.connections.len();
     for ev in evr_kbd.read() {
@@ -33,7 +32,7 @@ pub fn handle_text_input(
         match &ev.logical_key {
             Key::Enter => {
                 *mode = Mode::Command;
-                match input.buffer.parse() {
+                match buf.parse() {
                     Ok(input) => {
                         let force = Force {
                             magnitude: input,
@@ -53,18 +52,18 @@ pub fn handle_text_input(
                         truss.connections.push(Connection::Force(force));
                     }
                     Err(err) => {
-                        input.buffer.clear();
+                        buf.clear();
                         println!("Please only intger values of magnitudes");
                     }
                 }
             }
 
             Key::Backspace => {
-                input.buffer.pop();
+                buf.pop();
             }
             Key::Character(ch) => {
                 if ch.chars().any(|c| !c.is_control()) {
-                    input.buffer.push_str(ch);
+                    buf.push_str(ch);
                 }
             }
             _ => {}
@@ -79,7 +78,6 @@ pub fn handle_insert(
     cursor: Res<CursorLocation>,
     mut truss: ResMut<Truss>,
     mut meshes: ResMut<Assets<Mesh>>,
-    input: Res<TextInput>,
 ) {
     let cursorloc = cursor.world_position().unwrap_or(Vec2::ZERO);
     if keys.just_pressed(KeyCode::Space) {
@@ -184,7 +182,6 @@ pub fn handle_insert(
     if keys.just_pressed(KeyCode::KeyF) {
         let connection_count = truss.connections.len();
         println!("enter magnitude");
-        println!("TextInput buffer: {}", input.buffer);
         *mode = Mode::InsertText;
     }
     // we can check multiple at once with `.any_*`
@@ -220,8 +217,6 @@ pub fn handle_dimension(
     cursor: Res<CursorLocation>,
     mut truss: ResMut<Truss>,
     mut meshes: ResMut<Assets<Mesh>>,
-    input: Res<TextInput>,
-    truss: ResMut<Truss>,
 ) {
     let cursorloc = cursor.world_position().unwrap_or(Vec2::ZERO);
     let mut pair = vec![];
@@ -234,7 +229,7 @@ pub fn handle_dimension(
             .unwrap();
         pair.push(matching_node);
         if pair.len() == 2 {
-            truss.edges.iter().find(|x|x.start==pair[0]| x.)
+            //fix
             pair.clear();
         }
     }

@@ -98,12 +98,13 @@ impl Command for Connection {
     }
 }
 
-#[derive(Resource, Clone, Copy, Debug)]
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Insert,
     Edit,
     Dimension,
     Command,
+    InsertText,
 }
 #[derive(Resource, Debug, Clone)]
 pub struct Force {
@@ -117,6 +118,7 @@ pub struct Force {
 pub struct Truss {
     pub nodes: Vec<Node>, // node entities in order
     pub edges: Vec<Member>,
+    pub preview: Option<AssetId<Mesh>>,
     pub selected_node: Option<Node>,
     pub dragging: Option<Node>,
     pub connections: Vec<Connection>,
