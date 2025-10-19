@@ -33,7 +33,7 @@ pub fn calculate_member_stress(truss: &mut Truss) -> Mat<f32> {
     // puts reactions at the node id for x and the node id +1 for y eqautions
     // the second half(left to right) of the matrix should be reactions, whereas the first half
     // should be the forces in all the members.
-    let mut halfsize = size / 2;
+    let mut halfsize = truss.edges.len();
 
     for connection in &truss.connections {
         println!("Connection: {:?}", connection);

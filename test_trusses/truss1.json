@@ -1,0 +1,37 @@
+{
+  "nodes": [
+    "0,0",
+    "1.0000000000000002,0",
+    "0,1.0000000000000002"
+  ],
+  "awnsers": [
+    0,
+    0,
+    0,
+    0,
+    2,
+    0
+  ],
+  "members": [
+    "2,0",
+    "0,1",
+    "1,2"
+  ],
+  "supports": {
+    "0": "P",
+    "1": "Rh"
+  },
+  "forces": [
+    "0,0,-2"
+  ],
+  "workspace": {
+    "workspace-width": 30,
+    "workspace-height": 18,
+    "workspace-width-pixels": 926,
+    "Yaxis-dist-from-left": 15,
+    "Xaxis-dist-from-bottom": 6,
+    "grid-x": 1,
+    "grid-y": 1,
+    "force-scale": 100
+  }
+}

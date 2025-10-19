@@ -21,8 +21,8 @@ pub fn handle_text_input(
     mut truss: ResMut<Truss>,
     cursor: Res<CursorLocation>,
     mut commands: Commands,
+    mut buffer: ResMut<TextBuffer>,
 ) {
-    let mut buf = String::new();
     let cursorloc = cursor.world_position().unwrap();
     let connection_count = truss.connections.len();
     for ev in evr_kbd.read() {
@@ -32,7 +32,7 @@ pub fn handle_text_input(
         match &ev.logical_key {
             Key::Enter => {
                 *mode = Mode::Command;
-                match buf.parse() {
+                match buffer.0.parse() {
                     Ok(input) => {
                         let force = Force {
                             magnitude: input,
@@ -52,18 +52,18 @@ pub fn handle_text_input(
                         truss.connections.push(Connection::Force(force));
                     }
                     Err(err) => {
-                        buf.clear();
+                        buffer.0.clear();
                         println!("Please only intger values of magnitudes");
                     }
                 }
             }
 
             Key::Backspace => {
-                buf.pop();
+                buffer.0.pop();
             }
             Key::Character(ch) => {
                 if ch.chars().any(|c| !c.is_control()) {
-                    buf.push_str(ch);
+                    buffer.0.push_str(ch);
                 }
             }
             _ => {}

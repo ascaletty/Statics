@@ -204,4 +204,4 @@ pub struct LastNode {
 }
 
 #[derive(Resource)]
-pub struct NodeCount(pub u32);
+pub struct TextBuffer(pub String);
