@@ -106,6 +106,8 @@ pub enum Mode {
     Command,
     InsertText,
 }
+#[derive(Resource)]
+pub struct PrevMode(pub Option<Mode>);
 #[derive(Resource, Debug, Clone)]
 pub struct Force {
     pub start: Vec2,
@@ -121,6 +123,7 @@ pub struct Truss {
     pub preview: Option<AssetId<Mesh>>,
     pub selected_node: Option<Node>,
     pub dragging: Option<Node>,
+    pub constraints: Vec<Constraint>,
     pub connections: Vec<Connection>,
     pub membermap: HashMap<usize, Handle<Mesh>>,
     pub nodemap: HashMap<usize, Handle<Mesh>>,
@@ -172,6 +175,7 @@ impl Command for Member {
 pub struct Node {
     pub pos: Vec2,
     pub id: usize,
+    pub fixed: bool,
 }
 impl Command for Node {
     fn apply(self, world: &mut World) {
@@ -205,3 +209,11 @@ pub struct LastNode {
 
 #[derive(Resource)]
 pub struct TextBuffer(pub String);
+
+#[derive(Clone, Resource)]
+pub enum Constraint {
+    Distance(usize, usize, f32), // enforce distance
+    Horizontal(usize, usize),    // same y
+    Vertical(usize, usize),      // same x
+    Coincident(usize, usize),    // same point
+}

@@ -22,6 +22,7 @@ pub fn handle_text_input(
     cursor: Res<CursorLocation>,
     mut commands: Commands,
     mut buffer: ResMut<TextBuffer>,
+    prevmode: Res<PrevMode>,
 ) {
     let cursorloc = cursor.world_position().unwrap();
     let connection_count = truss.connections.len();
@@ -31,8 +32,9 @@ pub fn handle_text_input(
         }
         match &ev.logical_key {
             Key::Enter => {
-                *mode = Mode::Command;
-                match buffer.0.parse() {
+                *mode = prevmode.0.unwrap();
+                print!("{}", buffer.0);
+                match buffer.0[1..].parse() {
                     Ok(input) => {
                         let force = Force {
                             magnitude: input,
@@ -51,9 +53,10 @@ pub fn handle_text_input(
                         }
                         truss.connections.push(Connection::Force(force));
                     }
-                    Err(err) => {
+                    Err(_err) => {
                         buffer.0.clear();
                         println!("Please only intger values of magnitudes");
+                        break;
                     }
                 }
             }
@@ -93,6 +96,7 @@ pub fn handle_insert(
             let last_node = Node {
                 pos: last.position.unwrap_or(old_node.pos),
                 id: nodecount - 1,
+                fixed: false,
             };
 
             let memcount = truss.edges.len();
@@ -114,6 +118,7 @@ pub fn handle_insert(
             let node = Node {
                 pos: cursorloc,
                 id: nodecount,
+                fixed: false,
             };
             commands.queue(node.clone());
             truss.nodes.push(node.clone());
@@ -122,6 +127,7 @@ pub fn handle_insert(
                 let last_node = Node {
                     pos: last.position.unwrap(),
                     id: nodecount - 1,
+                    fixed: false,
                 };
                 let member = Member {
                     start: last_node,
@@ -196,7 +202,7 @@ pub fn handle_command(
     mut mode: ResMut<Mode>,
     mut last: ResMut<LastNode>,
     keys: Res<ButtonInput<KeyCode>>,
-    truss: ResMut<Truss>,
+    mut truss: ResMut<Truss>,
 ) {
     if keys.just_pressed(KeyCode::KeyI) {
         *mode = Mode::Insert;
@@ -206,7 +212,7 @@ pub fn handle_command(
         *mode = Mode::Dimension;
     }
     if keys.just_pressed(KeyCode::KeyR) {
-        physics::calculate_member_stress(truss.into_inner());
+        physics::calculate_member_stress(&mut truss);
     }
 }
 pub fn handle_dimension(
@@ -217,6 +223,7 @@ pub fn handle_dimension(
     cursor: Res<CursorLocation>,
     mut truss: ResMut<Truss>,
     mut meshes: ResMut<Assets<Mesh>>,
+    input: Res<TextBuffer>,
 ) {
     let cursorloc = cursor.world_position().unwrap_or(Vec2::ZERO);
     let mut pair = vec![];
@@ -230,7 +237,14 @@ pub fn handle_dimension(
         pair.push(matching_node);
         if pair.len() == 2 {
             //fix
-            pair.clear();
+            let [first, second] = [pair[0], pair[1]];
+            let current_length = first.pos.distance(second.pos);
+            *mode = Mode::InsertText;
+            truss.constraints.push(Constraint::Distance(
+                first.id,
+                second.id,
+                input.0.parse().unwrap(),
+            ));
         }
     }
 }

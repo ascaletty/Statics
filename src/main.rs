@@ -22,10 +22,12 @@ fn main() {
             preview: None,
             dragging: None,
             connections: vec![],
+            constraints: vec![],
             membermap: HashMap::new(),
             nodemap: HashMap::new(),
             connectionmap: HashMap::new(),
         })
+        .insert_resource(PrevMode(None))
         .insert_resource(LastNode { position: None })
         .add_plugins((DefaultPlugins, TrackCursorPlugin))
         .add_systems(Startup, setup_camera)
