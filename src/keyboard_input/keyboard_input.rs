@@ -32,7 +32,7 @@ pub fn handle_text_input(
         }
         match &ev.logical_key {
             Key::Enter => {
-                *mode = prevmode.0.unwrap();
+                *mode = prevmode.0;
                 print!("{}", buffer.0);
                 match buffer.0[1..].parse() {
                     Ok(input) => {
@@ -215,36 +215,36 @@ pub fn handle_command(
         physics::calculate_member_stress(&mut truss);
     }
 }
-pub fn handle_dimension(
-    mut commands: Commands,
-    keys: Res<ButtonInput<KeyCode>>,
-    mut mode: ResMut<Mode>,
-    mut last: ResMut<LastNode>,
-    cursor: Res<CursorLocation>,
-    mut truss: ResMut<Truss>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    input: Res<TextBuffer>,
-) {
-    let cursorloc = cursor.world_position().unwrap_or(Vec2::ZERO);
-    let mut pair = vec![];
-    if keys.just_pressed(KeyCode::KeyD) {
-        let matching_node = truss
-            .nodes
-            .iter()
-            .filter(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
-            .min_by_key(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
-            .unwrap();
-        pair.push(matching_node);
-        if pair.len() == 2 {
-            //fix
-            let [first, second] = [pair[0], pair[1]];
-            let current_length = first.pos.distance(second.pos);
-            *mode = Mode::InsertText;
-            truss.constraints.push(Constraint::Distance(
-                first.id,
-                second.id,
-                input.0.parse().unwrap(),
-            ));
-        }
-    }
-}
+// pub fn handle_dimension(
+//     mut commands: Commands,
+//     keys: Res<ButtonInput<KeyCode>>,
+//     mut mode: ResMut<Mode>,
+//     mut last: ResMut<LastNode>,
+//     cursor: Res<CursorLocation>,
+//     mut truss: ResMut<Truss>,
+//     mut meshes: ResMut<Assets<Mesh>>,
+//     input: Res<TextBuffer>,
+// ) {
+//     let cursorloc = cursor.world_position().unwrap_or(Vec2::ZERO);
+//     let mut pair = vec![];
+//     if keys.just_pressed(KeyCode::KeyD) {
+//         let matching_node = truss
+//             .nodes
+//             .iter()
+//             .filter(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
+//             .min_by_key(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
+//             .unwrap();
+//         pair.push(matching_node);
+//         if pair.len() == 2 {
+//             //fix
+//             let [first, second] = [pair[0], pair[1]];
+//             let current_length = first.pos.distance(second.pos);
+//             *mode = Mode::InsertText;
+//             truss.constraints.push(Constraint::Distance(
+//                 first.id,
+//                 second.id,
+//                 input.0.parse().unwrap(),
+//             ));
+//         }
+//     }
+// }
