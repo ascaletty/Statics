@@ -107,7 +107,7 @@ pub enum Mode {
     InsertText,
 }
 #[derive(Resource)]
-pub struct PrevMode(pub Option<Mode>);
+pub struct PrevMode(pub Mode);
 #[derive(Resource, Debug, Clone)]
 pub struct Force {
     pub start: Vec2,
@@ -210,10 +210,21 @@ pub struct LastNode {
 #[derive(Resource)]
 pub struct TextBuffer(pub String);
 
-#[derive(Clone, Resource)]
+#[derive(Clone, Resource, Copy)]
 pub enum Constraint {
     Distance(usize, usize, f32), // enforce distance
     Horizontal(usize, usize),    // same y
     Vertical(usize, usize),      // same x
     Coincident(usize, usize),    // same point
+}
+
+#[derive(Clone, Resource)]
+pub struct Pair_Dimension {
+    pub pair: Vec<Node>,
+}
+
+#[derive(Resource)]
+pub enum InsertType {
+    Force,
+    DimensionDistance,
 }

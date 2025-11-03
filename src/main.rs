@@ -27,7 +27,8 @@ fn main() {
             nodemap: HashMap::new(),
             connectionmap: HashMap::new(),
         })
-        .insert_resource(PrevMode(None))
+        .insert_resource(Pair_Dimension { pair: vec![] })
+        .insert_resource(PrevMode(Mode::Insert))
         .insert_resource(LastNode { position: None })
         .add_plugins((DefaultPlugins, TrackCursorPlugin))
         .add_systems(Startup, setup_camera)
@@ -43,8 +44,16 @@ fn main() {
             Update,
             keyboard_input::handle_insert.run_if(resource_equals(Mode::Insert)),
         )
+        .add_systems(
+            Update,
+            keyboard_input::handle_dimension.run_if(resource_equals(Mode::Dimension)),
+        )
         .add_systems(Update, preview_on)
+        .add_systems(Update, print_mode)
         .run();
+}
+fn print_mode(mode: Res<Mode>) {
+    println!("Mode {:?}", mode);
 }
 
 fn preview_on(
@@ -177,6 +186,7 @@ mod tests {
                         Node {
                             id: i,
                             pos: Vec2::new(parts[0], parts[1]),
+                            fixed: false,
                         }
                     })
                     .collect();

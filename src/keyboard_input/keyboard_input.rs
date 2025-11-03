@@ -5,15 +5,15 @@ use bevy::input::ButtonState;
 use bevy::input::keyboard;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::{AssetId, Assets, ButtonInput, Commands, KeyCode, Mesh, Res, ResMut, Vec2};
+use bevy::render::mesh::MeshBuilder;
 use bevy::render::mesh::MeshVertexAttributeId;
+use bevy::render::mesh::RectangleMeshBuilder;
 use bevy::state::commands;
 use bevy_cursor::prelude::*;
 
 const SNAP_TOLERANCE: f32 = 10.;
 
 use bevy::input::keyboard::Key;
-use bevy::prelude::Resource;
-use faer::traits::pulp::core_arch::x86;
 pub fn handle_text_input(
     mut evr_kbd: EventReader<KeyboardInput>,
     mut mode: ResMut<Mode>,
@@ -186,7 +186,6 @@ pub fn handle_insert(
         truss.connections.push(pin);
     }
     if keys.just_pressed(KeyCode::KeyF) {
-        let connection_count = truss.connections.len();
         println!("enter magnitude");
         *mode = Mode::InsertText;
     }
@@ -215,36 +214,56 @@ pub fn handle_command(
         physics::calculate_member_stress(&mut truss);
     }
 }
-// pub fn handle_dimension(
-//     mut commands: Commands,
-//     keys: Res<ButtonInput<KeyCode>>,
-//     mut mode: ResMut<Mode>,
-//     mut last: ResMut<LastNode>,
-//     cursor: Res<CursorLocation>,
-//     mut truss: ResMut<Truss>,
-//     mut meshes: ResMut<Assets<Mesh>>,
-//     input: Res<TextBuffer>,
-// ) {
-//     let cursorloc = cursor.world_position().unwrap_or(Vec2::ZERO);
-//     let mut pair = vec![];
-//     if keys.just_pressed(KeyCode::KeyD) {
-//         let matching_node = truss
-//             .nodes
-//             .iter()
-//             .filter(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
-//             .min_by_key(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
-//             .unwrap();
-//         pair.push(matching_node);
-//         if pair.len() == 2 {
-//             //fix
-//             let [first, second] = [pair[0], pair[1]];
-//             let current_length = first.pos.distance(second.pos);
-//             *mode = Mode::InsertText;
-//             truss.constraints.push(Constraint::Distance(
-//                 first.id,
-//                 second.id,
-//                 input.0.parse().unwrap(),
-//             ));
-//         }
-//     }
-// }
+pub fn handle_dimension(
+    mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut mode: ResMut<Mode>,
+    mut last: ResMut<LastNode>,
+    cursor: Res<CursorLocation>,
+    mut truss: ResMut<Truss>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    input: Res<TextBuffer>,
+    mut pair_dimensions: ResMut<Pair_Dimension>,
+) {
+    let cursorloc = cursor.world_position().unwrap();
+    if keys.just_pressed(KeyCode::KeyD) {
+        println!("dimensioning");
+        let matching_node = truss
+            .nodes
+            .iter()
+            .min_by_key(|x| x.pos.distance(cursorloc) < SNAP_TOLERANCE)
+            .unwrap()
+            .clone();
+        pair_dimensions.pair.push(matching_node);
+        if pair_dimensions.pair.len() == 2 {
+            *mode = Mode::InsertText;
+            println!("we are really dimensioning now ");
+            //fix
+            // truss.constraints.push(Constraint::Distance(
+            //     pair_dimensions.pair[0].id,
+            //     pair_dimensions.pair[1].id,
+            //     input.0.parse().unwrap(),
+            // ));
+        }
+    }
+}
+pub fn handle_constraints(mut truss: ResMut<Truss>, mut meshes: ResMut<Assets<Mesh>>) {
+    for constraint in truss.constraints.clone() {
+        match constraint {
+            Constraint::Distance(start_id, end_id, length) => {
+                let member_id = truss
+                    .edges
+                    .iter()
+                    .find(|x| x.start.id == start_id && x.end.id == end_id)
+                    .unwrap()
+                    .id;
+                let mesh_id = truss.membermap.get(&member_id).unwrap().id();
+                let mesh = meshes.get_mut(mesh_id).unwrap();
+                *mesh = RectangleMeshBuilder::new(2., length).build();
+            }
+            Constraint::Horizontal(first_id, second_id) => {}
+            Constraint::Vertical(first_id, second_id) => {}
+            Constraint::Coincident(first_id, second_id) => {}
+        }
+    }
+}
