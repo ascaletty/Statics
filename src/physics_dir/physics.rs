@@ -8,7 +8,6 @@ use bevy::{
     platform::collections::HashSet,
     tasks::futures_lite::stream::iter,
 };
-use faer::linalg::solvers::Qr;
 use faer::{
     dyn_stack::{MemStack, mem},
     linalg::{cholesky::llt::solve::solve_in_place, solvers},
