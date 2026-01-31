@@ -1,3 +1,5 @@
+use std::process::id;
+
 use eframe::{
     egui::{self, Color32, Pos2, Stroke},
     epaint::EllipseShape,
@@ -18,11 +20,21 @@ fn main() {
 struct Truss {
     edges: Vec<Member>,
     points: Vec<Pos2>,
+    last_node: Option<usize>,
+    mode: Mode,
 }
 #[derive(Default)]
 struct Member {
     p1: usize,
     p2: usize,
+}
+#[derive(Default)]
+enum Mode {
+    Command,
+    #[default]
+    Insert,
+    Edit,
+    Solve,
 }
 
 impl Truss {
@@ -43,17 +55,59 @@ impl eframe::App for Truss {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Hello World!");
-            if let Some(pos2, keydown) = ctx.input(|i| i.key_pressed(egui::Key::Space)) {
-                self.edges.push(Member {
-                    p1: self.points.len(),
-                    p2: self.points.len(),
-                });
-                self.edges.push(Member {
-                    p1: self.points.len(),
-                    p2: self.points.len() + 1,
-                });
+            match self.mode {
+                Mode::Insert => {
+                    if ctx.input(|i| i.key_pressed(egui::Key::Space)) {
+                        if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
+                            if let Some(idx) = hit_test(&self.points, pos) {
+                                println!("HIT{idx}");
+                                self.edges.push(Member {
+                                    p1: self.last_node.unwrap_or(self.points.len() - 1),
+                                    p2: idx,
+                                });
+                                self.last_node = Some(idx);
+                            } else {
+                                if self.points.len() >= 1 {
+                                    self.edges.push(Member {
+                                        p1: self.last_node.unwrap_or(self.points.len() - 1),
+                                        p2: self.points.len(),
+                                    });
+                                    self.last_node = None;
+                                }
+                                self.points.push(pos);
+                            }
+                        }
+                    }
+                    if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
+                        if self.points.len() >= 1 {
+                            ui.painter().line_segment(
+                                [
+                                    self.points[self.last_node.unwrap_or(self.points.len() - 1)],
+                                    pos,
+                                ],
+                                Stroke::new(1.0, egui::Color32::WHITE),
+                            );
+                        }
+                    }
+                    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        self.mode = Mode::Command;
+                    }
+                }
+                Mode::Command => {
+                    if ctx.input(|i| i.key_pressed(egui::Key::I)) {
+                        self.mode = Mode::Insert;
+                    }
 
-                self.points.push(pos);
+                    if ctx.input(|i| i.key_pressed(egui::Key::Space)) {
+                        if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
+                            if let Some(idx) = hit_test(&self.points, pos) {
+                                self.last_node = Some(idx);
+                            }
+                        }
+                    }
+                }
+                Mode::Edit => {}
+                Mode::Solve => {}
             }
             for point in &self.points {
                 ui.painter()
@@ -65,6 +119,17 @@ impl eframe::App for Truss {
                     Stroke::new(2.0, Color32::RED),
                 );
             }
+            egui::TopBottomPanel::bottom("command bar").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let mod_str = match self.mode {
+                        Mode::Edit => "Edit",
+                        Mode::Command => "Command",
+                        Mode::Solve => "Solve",
+                        Mode::Insert => "Insert",
+                    };
+                    ui.label(mod_str);
+                })
+            })
         });
     }
 }
