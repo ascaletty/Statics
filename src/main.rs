@@ -4,7 +4,7 @@ use eframe::{
     egui::{self, Color32, Pos2, Stroke},
     epaint::EllipseShape,
 };
-use egui::Painter;
+use egui::{InputOptions, Painter};
 use nalgebra::{DMatrix, point};
 
 fn main() {
@@ -22,7 +22,16 @@ struct Truss {
     points: Vec<Pos2>,
     last_node: Option<usize>,
     mode: Mode,
+    force: Vec<Force>,
+    input_buf: String,
 }
+#[derive(Default)]
+struct Force {
+    p1: usize,
+    p2: Pos2,
+    mag: u32,
+}
+
 #[derive(Default)]
 struct Member {
     p1: usize,
@@ -33,6 +42,7 @@ enum Mode {
     Command,
     #[default]
     Insert,
+    TextEdit,
     Edit,
     Solve,
 }
@@ -78,6 +88,11 @@ impl eframe::App for Truss {
                             }
                         }
                     }
+
+                    if ctx.input(|i| i.key_pressed(egui::Key::F)) {
+                        println!("Force");
+                        self.mode = Mode::TextEdit
+                    }
                     if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
                         if self.points.len() >= 1 {
                             ui.painter().line_segment(
@@ -108,6 +123,34 @@ impl eframe::App for Truss {
                 }
                 Mode::Edit => {}
                 Mode::Solve => {}
+                Mode::TextEdit => {
+                    let pos = ctx
+                        .input(|i| i.pointer.hover_pos())
+                        .unwrap_or(Pos2 { x: 0., y: 0. });
+                    let response = ui.add(egui::TextEdit::singleline(&mut self.input_buf));
+
+                    if !response.has_focus() {
+                        response.request_focus();
+                    }
+                    if self.points.len() >= 1 {
+                        ui.painter().line_segment(
+                            [
+                                self.points[self.last_node.unwrap_or(self.points.len() - 1)],
+                                pos,
+                            ],
+                            Stroke::new(1.0, egui::Color32::WHITE),
+                        );
+                    }
+                    if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        self.force.push(Force {
+                            p1: self.last_node.unwrap_or(self.points.len() - 1),
+                            p2: pos,
+                            mag: self.input_buf.parse().unwrap(),
+                        });
+                        self.mode = Mode::Insert;
+                        println!("{}", self.input_buf);
+                    }
+                }
             }
             for point in &self.points {
                 ui.painter()
@@ -123,6 +166,7 @@ impl eframe::App for Truss {
                 ui.horizontal(|ui| {
                     let mod_str = match self.mode {
                         Mode::Edit => "Edit",
+                        Mode::TextEdit => "Input",
                         Mode::Command => "Command",
                         Mode::Solve => "Solve",
                         Mode::Insert => "Insert",
