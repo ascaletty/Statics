@@ -1,0 +1,214 @@
+use egui::Pos2;
+#[derive(Default)]
+pub struct Truss {
+    edges: Vec<Member>,
+    points: Vec<Pos2>,
+    last_node: Option<usize>,
+    mode: Mode,
+    force: Vec<Force>,
+    input_buf: String,
+}
+#[derive(Default)]
+pub struct Force {
+    p1: usize,
+    p2: Pos2,
+    mag: u32,
+}
+
+#[derive(Default)]
+pub struct Member {
+    p1: usize,
+    p2: usize,
+}
+#[derive(Default)]
+pub enum Mode {
+    Command,
+    #[default]
+    Insert,
+    TextEdit,
+    Edit,
+    Solve,
+}
+fn hit_test(points: &[Pos2], pos: Pos2) -> Option<usize> {
+    points.iter().position(|p| p.distance(pos) < 8.0)
+}
+
+impl eframe::App for Truss {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.handle_mode(ctx);
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            self.draw_scene(ui, ctx);
+        });
+
+        self.draw_command_bar(ctx);
+    }
+}
+
+impl Truss {
+    fn handle_mode(&mut self, ctx: &egui::Context) {
+        match self.mode {
+            Mode::Insert => self.handle_insert(ctx),
+            Mode::Command => self.handle_command(ctx),
+            Mode::TextEdit => self.handle_text_edit(ctx),
+            Mode::Edit => {}
+            Mode::Solve => {}
+        }
+    }
+
+    fn handle_insert(&mut self, ctx: &egui::Context) {
+        if ctx.input(|i| i.key_pressed(egui::Key::Space)) {
+            if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
+                self.handle_insert_click(pos);
+            }
+        }
+
+        if ctx.input(|i| i.key_pressed(egui::Key::F)) {
+            self.mode = Mode::TextEdit;
+        }
+
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.mode = Mode::Command;
+        }
+    }
+
+    fn handle_insert_click(&mut self, pos: egui::Pos2) {
+        if let Some(idx) = hit_test(&self.points, pos) {
+            self.edges.push(Member {
+                p1: self.last_node.unwrap_or(self.points.len() - 1),
+                p2: idx,
+            });
+            self.last_node = Some(idx);
+        } else {
+            if !self.points.is_empty() {
+                self.edges.push(Member {
+                    p1: self.last_node.unwrap_or(self.points.len() - 1),
+                    p2: self.points.len(),
+                });
+                self.last_node = None;
+            }
+            self.points.push(pos);
+        }
+    }
+
+    fn handle_command(&mut self, ctx: &egui::Context) {
+        if ctx.input(|i| i.key_pressed(egui::Key::I)) {
+            self.mode = Mode::Insert;
+        }
+
+        if ctx.input(|i| i.key_pressed(egui::Key::Space)) {
+            if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
+                if let Some(idx) = hit_test(&self.points, pos) {
+                    self.last_node = Some(idx);
+                }
+            }
+        }
+    }
+
+    fn handle_text_edit(&mut self, ctx: &egui::Context) {
+        use egui::*;
+
+        TopBottomPanel::bottom("nvim_command_bar")
+            .exact_height(28.0)
+            .show(ctx, |ui| {
+                Frame::new().show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(":").color(Color32::LIGHT_GREEN).monospace());
+
+                        let text_edit = TextEdit::singleline(&mut self.input_buf)
+                            .font(TextStyle::Monospace)
+                            .desired_width(f32::INFINITY)
+                            .frame(false);
+
+                        let response = ui.add(text_edit);
+
+                        // Auto-focus when entering mode
+                        if ui.memory(|m| !m.has_focus(response.id)) {
+                            response.request_focus();
+                        }
+
+                        // Enter submits
+                        if ui.input(|i| i.key_pressed(Key::Enter)) {
+                            self.submit_force(ctx);
+                        }
+
+                        // Esc cancels
+                        if ui.input(|i| i.key_pressed(Key::Escape)) {
+                            self.input_buf.clear();
+                            self.mode = Mode::Insert;
+                        }
+                    });
+                });
+            });
+    }
+
+    fn submit_force(&mut self, ctx: &egui::Context) {
+        if let Ok(mag) = self.input_buf.parse() {
+            if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
+                self.force.push(Force {
+                    p1: self.last_node.unwrap_or(self.points.len() - 1),
+                    p2: pos,
+                    mag,
+                });
+            }
+        }
+
+        self.input_buf.clear();
+        self.mode = Mode::Insert;
+    }
+
+    fn draw_scene(&self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let painter = ui.painter();
+
+        // Preview line
+        if let Mode::Insert = self.mode {
+            let pos = ctx
+                .input(|i| i.pointer.hover_pos())
+                .unwrap_or(Pos2::new(0., 0.));
+            if !self.points.is_empty() {
+                painter.line_segment(
+                    [
+                        self.points[self.last_node.unwrap_or(self.points.len() - 1)],
+                        pos,
+                    ],
+                    egui::Stroke::new(1.0, egui::Color32::WHITE),
+                );
+            }
+        }
+
+        // Draw points
+        for point in &self.points {
+            painter.circle_stroke(*point, 3.0, egui::Stroke::new(1.0, egui::Color32::WHITE));
+        }
+
+        // Draw members
+        for member in &self.edges {
+            painter.line_segment(
+                [self.points[member.p1], self.points[member.p2]],
+                egui::Stroke::new(2.0, egui::Color32::RED),
+            );
+        }
+    }
+
+    fn draw_command_bar(&self, ctx: &egui::Context) {
+        egui::TopBottomPanel::bottom("command bar").show(ctx, |ui| {
+            let mode_str = match self.mode {
+                Mode::Edit => "Edit",
+                Mode::TextEdit => "Input",
+                Mode::Command => "Command",
+                Mode::Solve => "Solve",
+                Mode::Insert => "Insert",
+            };
+
+            ui.label(mode_str);
+        });
+    }
+
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // Customize egui here with cc.egui_ctx.set_fonts and cc.egui_ctx.set_visuals.
+        // Restore app state using cc.storage (requires the "persistence" feature).
+        // Use the cc.gl (a glow::Context) to create graphics shaders and buffers that you can use
+        // for e.g. egui::PaintCallback.
+        Self::default()
+    }
+}
