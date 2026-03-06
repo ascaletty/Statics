@@ -1,4 +1,4 @@
-use egui::{Key, Pos2};
+use egui::{Key, Pos2, debug_text::print};
 #[derive(Debug, Default)]
 pub enum MessageType {
     #[default]
@@ -7,25 +7,26 @@ pub enum MessageType {
 }
 #[derive(Default, Debug)]
 pub struct Truss {
-    edges: Vec<Member>,
-    points: Vec<Pos2>,
-    last_node: Option<usize>,
-    mode: Mode,
-    messagetyp: MessageType,
-    force: Vec<Force>,
-    input_buf: String,
+    pub edges: Vec<Member>,
+    pub points: Vec<Pos2>,
+    pub connections: Vec<ConnectionData>,
+    pub last_node: Option<usize>,
+    pub mode: Mode,
+    pub messagetyp: MessageType,
+    pub force: Vec<Force>,
+    pub input_buf: String,
 }
 #[derive(Default, Debug)]
 pub struct Force {
-    p1: usize,
-    p2: Pos2,
-    mag: u32,
+    pub p1: usize,
+    pub p2: Pos2,
+    pub mag: f32,
 }
 
 #[derive(Default, Debug)]
 pub struct Member {
-    p1: usize,
-    p2: usize,
+    pub p1: usize,
+    pub p2: usize,
 }
 #[derive(Default, Debug)]
 pub enum Mode {
@@ -36,16 +37,28 @@ pub enum Mode {
     Edit,
     Solve,
 }
+#[derive(Debug)]
+pub enum Connection {
+    Pin,
+    Roller,
+    Joint,
+}
+#[derive(Debug)]
+pub enum ConnectionData {
+    Roller(usize),
+    Pin(usize),
+}
 
-use std::{f32::consts::PI, num::NonZeroUsize};
+use std::{f32::consts::PI, num::NonZeroUsize, process::id};
 
 use faer::{
     dyn_stack::{MemStack, mem},
+    linalg::solvers::PartialPivLu,
+    linalg::solvers::SolveCore,
     linalg::{cholesky::llt::solve::solve_in_place, solvers},
     mat::Mat,
     prelude::*,
 };
-use rayon::ThreadPoolBuilder;
 
 pub fn calculate_member_stress(truss: &mut Truss) -> Mat<f32> {
     let size = 2 * truss.points.len();
@@ -64,75 +77,52 @@ pub fn calculate_member_stress(truss: &mut Truss) -> Mat<f32> {
     // the second half(left to right) of the matrix should be reactions, whereas the first half
     // should be the forces in all the members.
     let mut halfsize = truss.edges.len();
+    println!("halfsize{}", halfsize);
 
     for connection in &truss.connections {
-        println!("Connection: {:?}", connection);
-
         halfsize += match connection {
-            Connection::Pin(pos, _id) => {
+            ConnectionData::Pin(id) => {
                 reactions += 2;
-                let matching_node = truss
-                    .nodes
-                    .iter()
-                    .find(|x| x.pos == *pos)
-                    .expect("need connections to be at nodes");
-                println!("node id found{} for pin", matching_node.id);
-                matrix[(matching_node.id * 2, halfsize)] = 1.;
 
-                println!("put pin at {},{}", matching_node.id, halfsize);
-                matrix[(matching_node.id * 2 + 1, halfsize + 1)] = 1.;
+                matrix[(id * 2, halfsize)] = 1.;
 
-                println!("put pin at {},{}", matching_node.id, halfsize + 1);
+                println!("put pin at {},{}", id, halfsize);
+                matrix[(id * 2 + 1, halfsize + 1)] = 1.;
+
+                println!("put pin at {},{}", id, halfsize + 1);
                 2
             }
-            Connection::Roller(pos, _id) => {
+            ConnectionData::Roller(id) => {
                 reactions += 1;
-                let matching_node = truss
-                    .nodes
-                    .iter()
-                    .filter(|x| x.pos == *pos)
-                    .min_by_key(|x| x.pos.distance(*pos) < 0.0001)
-                    .expect("need roller to be at nodes");
+                matrix[(id * 2 + 1, halfsize)] = 1.;
 
-                println!("node id found{} for roller", matching_node.id);
-
-                //only doing the y reactions rn
-                //will need to add support for rollers with x reactions
-                //
-                matrix[(matching_node.id * 2 + 1, halfsize)] = 1.;
-
-                println!("put rollecr at {},{}", matching_node.id + 1, halfsize);
                 1
             }
-            Connection::Force(_force) => 0,
         };
         println!("halfsize count {halfsize}");
     }
-
-    print!("num of members {}", truss.edges.len());
-    print!("number of node{}", truss.nodes.len());
-    print!("num of reactions {}", reactions);
-    println!("matrix after placing reactions: {:?}", matrix);
+    for force in &truss.force {
+        print!("force id{}", force.p1);
+        matrix[(force.p1, halfsize - 1)];
+    }
     if size == truss.edges.len() + reactions {
         println!("Solvable!");
-
-        for member in truss.edges.clone() {
-            let start = member.start;
-            let end = member.end;
-            let dx = end.pos.x - start.pos.x;
-            let dy = end.pos.y - start.pos.y;
+        let mut i = 0;
+        for member in &truss.edges {
+            let start = truss.points[member.p1];
+            let end = truss.points[member.p2];
+            let dx = end.x - start.x;
+            let dy = end.y - start.y;
             let length = (dx * dx + dy * dy).sqrt();
-            println!("member id{}", member.id);
-            println!("start.id {}", start.id);
-            println!("end.id{}", end.id);
 
-            let col = member.id; // member force column
+            let col = i; // member force column
 
-            let row_x_start = 2 * start.id;
-            let row_y_start = 2 * start.id + 1;
-            let row_x_end = 2 * end.id;
-            let row_y_end = 2 * end.id + 1;
+            let row_x_start = 2 * member.p1;
+            let row_y_start = 2 * member.p1 + 1;
+            let row_x_end = 2 * member.p2;
+            let row_y_end = 2 * member.p2 + 1;
 
+            i += 1;
             // Start node
             // println!("placing {row_x_start}, {col}");
             //
@@ -147,28 +137,19 @@ pub fn calculate_member_stress(truss: &mut Truss) -> Mat<f32> {
             matrix[(row_x_end, col)] = -dx / length;
             matrix[(row_y_end, col)] = -dy / length;
         }
-        for force in &truss.connections {
-            if let Connection::Force(field) = force {
-                let nodes_with_force = truss.nodes.iter().filter(|x| x.pos == field.start);
-                for node in nodes_with_force {
-                    print!("node with force {:?}", node);
-                    //this should place the force on only y rows
-                    //place it at the end node of the
-                    //
-                    let start = field.start;
-                    let end = field.end;
-                    let diff = start - end;
-                    let angle = diff.angle_to(Vec2::new(1.0, 0.));
-                    println!("angle {}", angle);
-                    println!("angle_x, {}", angle.cos());
+        for force in &truss.force {
+            let start = truss.points[force.p1];
+            let end = force.p2;
+            let diff = start - end;
+            print!("diff{}", diff);
+            let anglex = diff.x / diff.length();
+            let angley = diff.y / diff.length();
+            println!("angle_x, {}", anglex);
 
-                    println!("angle_y, {}", angle.sin());
-                    let member = truss.edges.iter().find(|x| x.end.pos == node.pos).unwrap();
-
-                    zeros[(node.id * 2 + 1, 0)] = -field.magnitude * angle.sin();
-                    zeros[(node.id * 2, 0)] = field.magnitude * angle.cos();
-                }
-            }
+            println!("angle_y, {}", angley);
+            let id = force.p1;
+            zeros[(id * 2 + 1, 0)] = force.mag * angley;
+            zeros[(force.p1 * 2, 0)] = force.mag * anglex;
         }
         println!("forcing{:?}", zeros);
         println!("matrix after placing coefficeints: {:?}", matrix);
@@ -193,13 +174,22 @@ pub fn calculate_member_stress(truss: &mut Truss) -> Mat<f32> {
         println!("matrix {:?}", decomp);
         println!("sol? :{:?}", zeros);
         // }
-    } else if truss.edges.len() + reactions > size {
+    } else if truss.points.len() + reactions > size {
         println!("overdefined")
-    } else {
-        println!("need more reactions")
+    } else if truss.points.len() + reactions < size {
+        print!(
+            "truss points + reactions{}",
+            (truss.points.len() + reactions)
+        );
+        print!("size{}", size);
+        let morereactions = size - reactions;
+        println!("need {} more reactions", morereactions);
+        println!("reactions: {}", reactions);
     }
     zeros
 }
+
+// UI
 fn hit_test(points: &[Pos2], pos: Pos2) -> Option<usize> {
     points.iter().position(|p| p.distance(pos) < 8.0)
 }
@@ -229,7 +219,18 @@ impl Truss {
     fn handle_insert(&mut self, ctx: &egui::Context) {
         if ctx.input(|i| i.key_pressed(egui::Key::Space)) {
             if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
-                self.handle_insert_click(pos);
+                self.handle_insert_click(pos, Connection::Joint);
+            }
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::P)) {
+            if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
+                self.handle_insert_click(pos, Connection::Pin);
+            }
+        }
+
+        if ctx.input(|i| i.key_pressed(egui::Key::R)) {
+            if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
+                self.handle_insert_click(pos, Connection::Roller);
             }
         }
         if ctx.input(|i| i.key_pressed(egui::Key::F)) {
@@ -241,22 +242,42 @@ impl Truss {
         }
     }
 
-    fn handle_insert_click(&mut self, pos: egui::Pos2) {
-        if let Some(idx) = hit_test(&self.points, pos) {
-            self.edges.push(Member {
-                p1: self.last_node.unwrap_or(self.points.len() - 1),
-                p2: idx,
-            });
-            self.last_node = Some(idx);
-        } else {
-            if !self.points.is_empty() {
-                self.edges.push(Member {
-                    p1: self.last_node.unwrap_or(self.points.len() - 1),
-                    p2: self.points.len(),
-                });
-                self.last_node = None;
+    fn handle_insert_click(&mut self, pos: egui::Pos2, jointtype: Connection) {
+        match jointtype {
+            Connection::Joint => {
+                if let Some(idx) = hit_test(&self.points, pos) {
+                    self.edges.push(Member {
+                        p1: self.last_node.unwrap_or(self.points.len() - 1),
+                        p2: idx,
+                    });
+                    self.last_node = Some(idx);
+                } else {
+                    if !self.points.is_empty() {
+                        self.edges.push(Member {
+                            p1: self.last_node.unwrap_or(self.points.len() - 1),
+                            p2: self.points.len(),
+                        });
+                        self.last_node = None;
+                    }
+                    self.points.push(pos);
+                }
             }
-            self.points.push(pos);
+            Connection::Roller => {
+                if let Some(idx) = hit_test(&self.points, pos) {
+                    self.connections.push(ConnectionData::Roller(idx));
+                    self.last_node = Some(idx);
+                } else {
+                    panic!("Connections need to be at nodes")
+                }
+            }
+            Connection::Pin => {
+                if let Some(idx) = hit_test(&self.points, pos) {
+                    self.connections.push(ConnectionData::Pin(idx));
+                    self.last_node = Some(idx);
+                } else {
+                    panic!("Connection must be at nodes")
+                }
+            }
         }
     }
 
@@ -377,7 +398,8 @@ impl Truss {
         let input = self.input_buf.as_str();
         match input {
             "solve" => {
-                println!("solving beep boop")
+                println!("solving beep boop");
+                calculate_member_stress(self);
             }
             _ => {}
         }
@@ -408,6 +430,26 @@ impl Truss {
         // Draw points
         for point in &self.points {
             painter.circle_stroke(*point, 3.0, egui::Stroke::new(1.0, egui::Color32::WHITE));
+        }
+        for connection in &self.connections {
+            match connection {
+                ConnectionData::Roller(idx) => {
+                    painter.circle(
+                        self.points[*idx],
+                        6.0,
+                        egui::Color32::GREEN,
+                        egui::Stroke::new(1.0, egui::Color32::GREEN),
+                    );
+                }
+                ConnectionData::Pin(idx) => {
+                    painter.circle(
+                        self.points[*idx],
+                        6.0,
+                        egui::Color32::ORANGE,
+                        egui::Stroke::new(1.0, egui::Color32::ORANGE),
+                    );
+                }
+            }
         }
 
         // Draw members
