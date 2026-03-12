@@ -1,4 +1,7 @@
 use egui::{Key, Pos2, debug_text::print};
+use nalgebra_sparse::CooMatrix;
+mod physics;
+use nalgebra::DMatrix;
 #[derive(Debug, Default)]
 pub enum MessageType {
     #[default]
@@ -50,144 +53,6 @@ pub enum ConnectionData {
 }
 
 use std::{f32::consts::PI, num::NonZeroUsize, process::id};
-
-use faer::{
-    dyn_stack::{MemStack, mem},
-    linalg::solvers::PartialPivLu,
-    linalg::solvers::SolveCore,
-    linalg::{cholesky::llt::solve::solve_in_place, solvers},
-    mat::Mat,
-    prelude::*,
-};
-
-pub fn calculate_member_stress(truss: &mut Truss) -> Mat<f32> {
-    let size = 2 * truss.points.len();
-    let mut reactions = 0;
-    let mut matrix = Mat::<f32>::zeros(size, size);
-
-    let mut zeros = Mat::<f32>::zeros(size, 1);
-    print!("matrix, {:?}", matrix);
-    for node in &truss.points {
-        println!("Node: {:?}", node);
-    }
-    for member in &truss.edges {
-        println!("Member {:?}", member);
-    }
-    // puts reactions at the node id for x and the node id +1 for y eqautions
-    // the second half(left to right) of the matrix should be reactions, whereas the first half
-    // should be the forces in all the members.
-    let mut halfsize = truss.edges.len();
-    println!("halfsize{}", halfsize);
-
-    for connection in &truss.connections {
-        halfsize += match connection {
-            ConnectionData::Pin(id) => {
-                reactions += 2;
-
-                matrix[(id * 2, halfsize)] = 1.;
-
-                println!("put pin at {},{}", id, halfsize);
-                matrix[(id * 2 + 1, halfsize + 1)] = 1.;
-
-                println!("put pin at {},{}", id, halfsize + 1);
-                2
-            }
-            ConnectionData::Roller(id) => {
-                reactions += 1;
-                matrix[(id * 2 + 1, halfsize)] = 1.;
-
-                1
-            }
-        };
-        println!("halfsize count {halfsize}");
-    }
-    for force in &truss.force {
-        print!("force id{}", force.p1);
-        matrix[(force.p1, halfsize - 1)];
-    }
-    if size == truss.edges.len() + reactions {
-        println!("Solvable!");
-        let mut i = 0;
-        for member in &truss.edges {
-            let start = truss.points[member.p1];
-            let end = truss.points[member.p2];
-            let dx = end.x - start.x;
-            let dy = end.y - start.y;
-            let length = (dx * dx + dy * dy).sqrt();
-
-            let col = i; // member force column
-
-            let row_x_start = 2 * member.p1;
-            let row_y_start = 2 * member.p1 + 1;
-            let row_x_end = 2 * member.p2;
-            let row_y_end = 2 * member.p2 + 1;
-
-            i += 1;
-            // Start node
-            // println!("placing {row_x_start}, {col}");
-            //
-            // println!("placing {row_y_start}, {col}");
-            //
-            // println!("placing {row_x_end}, {col}");
-            //
-            // println!("placing {row_y_end}, {col}");
-            matrix[(row_x_start, col)] = dx / length;
-            matrix[(row_y_start, col)] = dy / length;
-            // End node (negative)
-            matrix[(row_x_end, col)] = -dx / length;
-            matrix[(row_y_end, col)] = -dy / length;
-        }
-        for force in &truss.force {
-            let start = truss.points[force.p1];
-            let end = force.p2;
-            let diff = start - end;
-            print!("diff{}", diff);
-            let anglex = diff.x / diff.length();
-            let angley = diff.y / diff.length();
-            println!("angle_x, {}", anglex);
-
-            println!("angle_y, {}", angley);
-            let id = force.p1;
-            zeros[(id * 2 + 1, 0)] = force.mag * angley;
-            zeros[(force.p1 * 2, 0)] = force.mag * anglex;
-        }
-        println!("forcing{:?}", zeros);
-        println!("matrix after placing coefficeints: {:?}", matrix);
-        let decomp = PartialPivLu::new(matrix.as_ref());
-
-        // let u = decomp.U();
-        //
-        // let tol = 1e-9;
-        // let mut singular = false;
-        //
-        // for i in 0..u.nrows().min(u.ncols()) {
-        //     if u[(i, i)].abs() < tol {
-        //         singular = true;
-        //         break;
-        //     }
-        // // }
-        // if singular {
-        //     panic!("matrix is singular and cannot be solved")
-        // } else {
-        // println!("matrix is not singular and is  invertable");
-        decomp.solve_in_place_with_conj(faer::Conj::No, zeros.as_mut());
-        println!("matrix {:?}", decomp);
-        println!("sol? :{:?}", zeros);
-        // }
-    } else if truss.points.len() + reactions > size {
-        println!("overdefined")
-    } else if truss.points.len() + reactions < size {
-        print!(
-            "truss points + reactions{}",
-            (truss.points.len() + reactions)
-        );
-        print!("size{}", size);
-        let morereactions = size - reactions;
-        println!("need {} more reactions", morereactions);
-        println!("reactions: {}", reactions);
-    }
-    zeros
-}
 
 // UI
 fn hit_test(points: &[Pos2], pos: Pos2) -> Option<usize> {
@@ -399,7 +264,8 @@ impl Truss {
         match input {
             "solve" => {
                 println!("solving beep boop");
-                calculate_member_stress(self);
+                // physics::calculate_member_stress(self);
+                physics::solve_stiff(self);
             }
             _ => {}
         }
