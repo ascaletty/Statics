@@ -1,6 +1,6 @@
 use egui::{Key, Pos2, debug_text::print};
 use nalgebra_sparse::CooMatrix;
-mod physics;
+pub mod physics;
 use nalgebra::DMatrix;
 #[derive(Debug, Default)]
 pub enum MessageType {
